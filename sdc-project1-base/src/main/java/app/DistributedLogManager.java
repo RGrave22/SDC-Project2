@@ -99,6 +99,7 @@ public class DistributedLogManager extends GenericProtocol {
 
 		clientChannel = createChannel(SimpleServerChannel.NAME, serverProps);
 
+
 		registerMessageSerializer(clientChannel, AppendToLog.MESSAGE_ID, AppendToLog.serializer);
 		registerMessageSerializer(clientChannel, ReadLogEntryRequest.MESSAGE_ID, ReadLogEntryRequest.serializer);
 		registerMessageSerializer(clientChannel, SubscribeToLog.MESSAGE_ID, SubscribeToLog.serializer);
