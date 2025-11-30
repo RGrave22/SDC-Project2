@@ -57,7 +57,7 @@
 							<transformers>
 								<transformer
 									implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-									<mainClass>app.LogManagerClient</mainClass>
+									<mainClass>app.Client</mainClass>
 								</transformer>
 							</transformers>
 							<filters>
@@ -120,5 +120,11 @@
 			<version>2.2.2</version>
 		</dependency>
 
-	</dependencies>
+        <dependency>
+            <groupId>com.codahale</groupId>
+            <artifactId>shamir</artifactId>
+            <version>0.7.0</version>
+        </dependency>
+
+    </dependencies>
 </project>

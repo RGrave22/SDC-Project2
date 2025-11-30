@@ -2,7 +2,7 @@
 
 address 127.0.0.1
 initial_port 10000
-clients 12
+clients 4
 server_proto 500
 operation_timeout 1000
 key_store clients.ks
