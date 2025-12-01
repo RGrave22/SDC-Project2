@@ -1,9 +1,7 @@
 package app;
 
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -21,18 +19,16 @@ import java.security.UnrecoverableKeyException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+import app.messages.client.messages.*;
+import app.messages.depsky.messages.ReadAcknowledge;
+import app.messages.depsky.messages.Write;
+import app.messages.depsky.messages.WriteAcknowledge;
 import com.codahale.shamir.Scheme;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import app.measurements.Measurements;
 import app.measurements.Status;
-import app.messages.client.messages.AppendToLog;
-import app.messages.client.messages.AppendToLogReply;
-import app.messages.client.messages.LogEntry;
-import app.messages.client.messages.ReadLogEntryReply;
-import app.messages.client.messages.ReadLogEntryRequest;
-import app.messages.client.messages.SubscribeToLog;
 import app.timers.ExpiredOperation;
 import io.netty.channel.EventLoopGroup;
 import pt.unl.fct.di.novasys.babel.core.Babel;
@@ -86,7 +82,7 @@ public class Client {
 	public final static String STATS_PERIOD = "report_period";
 	private long report_period; // miliseconds;
 
-    public static Map<String,PublicKey> filePublicKeys;
+    public static Map<String,PublicKey> existingFiles;
 
 	public final static float probability_to_read = (float) 0.30;
     public final static float probability_to_list = (float) 0.40;
@@ -104,10 +100,30 @@ public class Client {
 
 	private Measurements m;
 
-	public static void main(String[] args) throws InvalidParameterException, IOException, HandlerRegistrationException,
+    private static List<String> interactiveCommandsList;
+
+    public enum InteractiveCommands {
+        UPLOAD,
+        DOWNLOAD,
+        LIST,
+        DELETE
+    }
+
+    //Commands
+    public final String UPLOAD = "UPLOAD";
+    public final String DOWNLOAD = "DOWNLOAD";
+    public final String LIST = "LIST";
+    public final String DELETE = "DELETE";
+
+    public static void main(String[] args) throws InvalidParameterException, IOException, HandlerRegistrationException,
 			ProtocolAlreadyExistsException, GeneralSecurityException {
 		Properties props = Babel.loadConfig(Arrays.copyOfRange(args, 0, args.length), "babel-conf.txt");
 		logger.debug(props);
+
+        interactiveCommandsList = new ArrayList<>();
+        for(InteractiveCommands interactiveCommand : InteractiveCommands.values()) {
+            interactiveCommandsList.add(interactiveCommand.toString());
+        }
 
         if (props.containsKey(INTERFACE)) {
 			String address = getAddress(props.getProperty(INTERFACE));
@@ -117,7 +133,7 @@ public class Client {
 		}
 
 		Client opm = new Client(props);
-		opm.stats();
+		//opm.stats();
 
 	}
 
@@ -186,13 +202,12 @@ public class Client {
 		// System.err.println("Starting Babel.");
 		this.b.start();
 
+        existingFiles = new ConcurrentHashMap<>();
+
 		for (short i = 0; i < this.number_of_clients; i++) {
 			// System.err.println("Starting client: " + this.clients[i].client_name);
 			this.clients[i].startClient();
 		}
-
-
-        filePublicKeys = new ConcurrentHashMap<>();
 	}
 
 	protected class ClientInstance extends GenericProtocol {
@@ -223,10 +238,12 @@ public class Client {
         private static final String APPEND_OP_ID = "Append";
         private static final String READ_OP_ID = "Read";
 
-
+        //Shamir
         private final Scheme scheme;
         private int threshold;
         private Host[] servers;
+
+        private Map<String, Integer> versions;
 
 		public ClientInstance(short client_id, short port, char[] password, EventLoopGroup nm, Babel b, Measurements m, Host[] servers)
 				throws KeyStoreException, ProtocolAlreadyExistsException, UnrecoverableKeyException,
@@ -248,11 +265,15 @@ public class Client {
 			this.timeoutTimerID = -1;
 			this.lastEntryObserved = 0;
 
+            //Shamir
             //Scheme é responsável por partir as chaves e permitir que elas sejam reconstruidas com menos partes
             this.servers = servers;
             int f = (servers.length-1)/3;
             this.threshold = f + 1;
             this.scheme = new Scheme(new SecureRandom(), servers.length, threshold);
+
+            //Versões dos ficheiros
+            this.versions = new HashMap<>();
 
         }
 
@@ -268,18 +289,17 @@ public class Client {
 				clientProps2.put(SimpleClientChannel.PORT_KEY, String.valueOf(servers[i].getPort()));
 				clientChannel[i] = createChannel(SimpleClientChannel.NAME, clientProps2);
 
-				// message serializers and handlers
-				registerMessageSerializer(clientChannel[i], AppendToLog.MESSAGE_ID, AppendToLog.serializer);
-				registerMessageSerializer(clientChannel[i], ReadLogEntryRequest.MESSAGE_ID, ReadLogEntryRequest.serializer);
-				registerMessageSerializer(clientChannel[i], SubscribeToLog.MESSAGE_ID, SubscribeToLog.serializer);
-				registerMessageSerializer(clientChannel[i], AppendToLogReply.MESSAGE_ID, AppendToLogReply.serializer);
-				registerMessageSerializer(clientChannel[i], ReadLogEntryReply.MESSAGE_ID, ReadLogEntryReply.serializer);
-				registerMessageSerializer(clientChannel[i], LogEntry.MESSAGE_ID, LogEntry.serializer);
-					
-				registerMessageHandler(clientChannel[i], AppendToLogReply.MESSAGE_ID, this::handleAppentToLogReply);
-				registerMessageHandler(clientChannel[i], ReadLogEntryReply.MESSAGE_ID, this::handleReadLogEntryReply);
-				registerMessageHandler(clientChannel[i], LogEntry.MESSAGE_ID, this::handleLogEntry);
-				
+
+                registerMessageSerializer(clientChannel[i], Write.MESSAGE_ID, Write.serializer);
+                registerMessageSerializer(clientChannel[i], WriteAcknowledge.MESSAGE_ID, WriteAcknowledge.serializer);
+//                registerMessageSerializer(clientChannel[i], Read.MESSAGE_ID, Read.serializer);
+
+
+                registerMessageHandler(clientChannel[i], WriteAcknowledge.MESSAGE_ID, this::handleWriteAck);
+                registerMessageHandler(clientChannel[i], ReadAcknowledge.MESSAGE_ID, this::handleReadAck);
+
+
+                //Já estavam
 				registerChannelEventHandler(clientChannel[i], ServerDownEvent.EVENT_ID, this::uponServerDown);
 				registerChannelEventHandler(clientChannel[i], ServerUpEvent.EVENT_ID, this::uponServerUp);
 				registerChannelEventHandler(clientChannel[i], ServerFailedEvent.EVENT_ID, this::uponServerFailed);
@@ -295,20 +315,56 @@ public class Client {
 		}
 
 		public void startClient() {	
-//			SubscribeToLog request = new SubscribeToLog(client_name, 0);
-//			try {
-//				request.signMessage(key);
-//			} catch (InvalidKeyException | NoSuchAlgorithmException | SignatureException
-//					| InvalidSerializerException e) {
-//				System.err.println(client_name + " (" + client_id + "): Unable to sign client request.");
-//				e.printStackTrace();
-//				return;
-//			}
+			SubscribeToLog request = new SubscribeToLog(client_name, 0);
+			try {
+				request.signMessage(key);
+			} catch (InvalidKeyException | NoSuchAlgorithmException | SignatureException
+					| InvalidSerializerException e) {
+				System.err.println(client_name + " (" + client_id + "): Unable to sign client request.");
+				e.printStackTrace();
+				return;
+			}
 
             //TODO myPrimaryServer, é o destino da mensagem! no nosso caso teremos a lista dos servers
-//			sendMessage(myPrimaryChannel, request, application_proto_number, myPrimaryServer, 0);
+			sendMessage(myPrimaryChannel, request, application_proto_number, myPrimaryServer, 0);
 
-            FileGenerator.generateFile(client_name);
+            //Thread that opens scanner for interactive behavior
+            Thread t = new Thread(() -> {
+                Scanner input = new Scanner(System.in);
+                String[] command = new String[] {" "};
+                while (!command[0].equalsIgnoreCase("quit")) {
+                    command = input.nextLine().split(" ");
+
+                    if (interactiveCommandsList.stream().noneMatch(command[0]::equalsIgnoreCase) && !command[0].equalsIgnoreCase("quit")) {
+                        System.out.println("Unknown command! Available commands are:");
+                        for (String c : interactiveCommandsList) {
+                            System.out.println(c);
+                        }
+                    }
+
+                    switch (command[0].toUpperCase()) {
+                        case (UPLOAD):
+                            System.out.println("Uploading file...");
+                            break;
+
+                        case (DOWNLOAD):
+                            System.out.println("Downloading file...");
+                            break;
+
+                        case (LIST):
+                            System.out.println("Listing files...");
+                            break;
+
+                        case (DELETE):
+                            System.out.println("Deleting file...");
+                            break;
+                    }
+
+                }
+            });
+            t.start();
+
+            //FileGenerator.generateFile(client_name);
 
 //			executeOperation();
 		}
@@ -321,7 +377,6 @@ public class Client {
             float nextRandom = r.nextFloat();
 
             if (nextRandom <= Client.probability_to_read) {
-
 
                 //TODO LOGIGA PARA LER UM FICHEIRO
                 sendReadRequest();
@@ -381,6 +436,15 @@ public class Client {
 				this.timeoutTimerID = -1;
 			}
 		}
+
+        public void handleWriteAck(WriteAcknowledge msg, Host h, short protoId, int channel){
+            //TODO
+        }
+
+        public void handleReadAck(ReadAcknowledge msg, Host h, short protoId, int channel){
+            //TODO
+        }
+
 		
 		public void handleAppentToLogReply(AppendToLogReply msg, Host h, short protoId, int channel) {
 			clearTimeout();
