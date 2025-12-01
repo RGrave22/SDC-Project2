@@ -35,8 +35,8 @@ import java.util.*;
 
 public class Writer extends GenericProtocol {
 
-	public static final String PROTO_NAME = "BestEffortBroadcast";
-	public static final short PROTO_ID = 1001;
+    public static final String PROTO_NAME = "BestEffortBroadcast";
+    public static final short PROTO_ID = 1001;
 
     public final static String PAR_MYHOST = "membership.myhost";
     public final static String STORAGE = "storage.services";
@@ -45,12 +45,12 @@ public class Writer extends GenericProtocol {
     public static final String SERVER_PORT_KEY = "server_port";
 
     private HashSet<UUID> delivered;
-	private HashSet<Host> neighbors;
-	private HashMap<Host, PublicKey> publicKeys;
-	
-	private Host mySelf;
-	private PublicKey myPublicKey;
-	private PrivateKey myPrivateKey;
+    private HashSet<Host> neighbors;
+    private HashMap<Host, PublicKey> publicKeys;
+
+    private Host mySelf;
+    private PublicKey myPublicKey;
+    private PrivateKey myPrivateKey;
     private KeyStore truststore;
     private String myIdentifier;
 
@@ -60,24 +60,24 @@ public class Writer extends GenericProtocol {
     private static final String UPLOAD_DIR = "uploaded_files";
 
     private int channelID;
-	
-	private final Logger logger = LogManager.getLogger(Writer.class);
+
+    private final Logger logger = LogManager.getLogger(Writer.class);
 
     //Shamir
     private Scheme scheme;
     private int threshold;
     private List<Host> servers;
-	
-	public Writer() {
-		super(PROTO_NAME, PROTO_ID);
-		
-		delivered = new HashSet<UUID>();
-		neighbors = new HashSet<Host>();
-		publicKeys = new HashMap<Host, PublicKey>();
-		
-		this.mySelf = null;
-		this.myPublicKey = null;
-		this.myPrivateKey = null;
+
+    public Writer() {
+        super(PROTO_NAME, PROTO_ID);
+
+        delivered = new HashSet<UUID>();
+        neighbors = new HashSet<Host>();
+        publicKeys = new HashMap<Host, PublicKey>();
+
+        this.mySelf = null;
+        this.myPublicKey = null;
+        this.myPrivateKey = null;
         this.truststore = null;
         this.myIdentifier = null;
         this.filesVersions = new HashMap<>();
@@ -91,8 +91,8 @@ public class Writer extends GenericProtocol {
 
     }
 
-	@Override
-	public void init(Properties props) throws HandlerRegistrationException, IOException {
+    @Override
+    public void init(Properties props) throws HandlerRegistrationException, IOException {
         myIdentifier = props.getProperty(Crypto.CRYPTO_NAME_KEY);
 
         try {
@@ -104,7 +104,9 @@ public class Writer extends GenericProtocol {
             java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(myPublicKey.getEncoded());
             StringBuilder hex = new StringBuilder();
-            for (byte b : hash) hex.append(String.format("%02x", b));
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
             logger.info("[WRITER] Public key fingerprint (SHA-256): " + hex);
             System.out.println("[WRITER] Public key fingerprint (SHA-256): " + hex);
 
@@ -127,38 +129,35 @@ public class Writer extends GenericProtocol {
         channelProps.put(SimpleClientChannel.ADDRESS_KEY, props.getProperty(ADDRESS_KEY));
         channelProps.put(SimpleClientChannel.PORT_KEY, props.getProperty(SERVER_PORT_KEY));
 
-
         channelID = createChannel(SimpleClientChannel.NAME, channelProps);
 
         String[] storageList = props.getProperty(STORAGE).split(",");
-        for(int i = 0; i < storageList.length; i++){
+        for (int i = 0; i < storageList.length; i++) {
             hostElements = storageList[i].split(":");
             Host candidate = new Host(InetAddress.getByName(hostElements[0]), Short.parseShort(hostElements[1]));
             servers.add(candidate);
         }
 
-
-        int f = (servers.size()-1)/3;
+        int f = (servers.size() - 1) / 3;
         this.threshold = f + 1;
         this.scheme = new Scheme(new SecureRandom(), servers.size(), threshold);
-
 
         //Messages
         registerMessageSerializer(channelID, WriteAcknowledge.MESSAGE_ID, WriteAcknowledge.serializer);
         registerMessageSerializer(channelID, ReadAcknowledge.MESSAGE_ID, ReadAcknowledge.serializer);
-
+        registerMessageSerializer(channelID, Write.MESSAGE_ID, Write.serializer);
 
         registerMessageHandler(channelID, WriteAcknowledge.MESSAGE_ID, this::uponReceiveWriteAck);
         registerMessageHandler(channelID, ReadAcknowledge.MESSAGE_ID, this::uponReceiveReadAck);
 
-
-        for(Host host : servers){
+        for (Host host : servers) {
             openConnection(host, channelID);
+            System.out.println("[WRITER] Estamos a abrir um canal entre: " + host.toString() + ": " + channelID);
+            break;
         }
-	}
+    }
 
     private void uponReceiveReadAck(ProtoMessage protoMessage, Host host, short i, int i1) {
-
 
     }
 
@@ -205,14 +204,13 @@ public class Writer extends GenericProtocol {
             byte[] fileBytes = Files.readAllBytes(path);
 
             // TODO: cifrar, Shamir, enviar mensagens
-
             Write msg = new Write(myIdentifier, fileBytes, filename);
 
-            for(Host h: servers){
-                sendMessage(msg, h);
+            for (Host h : servers) {
+                sendMessage(channelID, msg, (short) 300, h, 0);
                 System.out.println("Mensagem enviada para: " + h.toString());
+                break;
             }
-
 
             System.out.println("[WRITER] Ready to upload: " + filename);
 
@@ -225,7 +223,6 @@ public class Writer extends GenericProtocol {
         }
     }
 
-
     public void downloadFile(String filename) {
         if (filename == null || filename.isEmpty()) {
             System.out.println("Usage: DOWNLOAD <filename>");
@@ -236,7 +233,6 @@ public class Writer extends GenericProtocol {
 
         // TODO
     }
-
 
     //Shamir
     private Map<Integer, byte[]> splitKey(SecretKey encryptionKey) {
