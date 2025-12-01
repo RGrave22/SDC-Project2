@@ -4,6 +4,8 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.security.GeneralSecurityException;
+import java.security.KeyStore;
+import java.security.PublicKey;
 import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.Properties;
@@ -16,6 +18,8 @@ import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
 import pt.unl.fct.di.novasys.babel.exceptions.InvalidParameterException;
 import pt.unl.fct.di.novasys.babel.exceptions.ProtocolAlreadyExistsException;
 import replication.ReplicationProtocolPlaceholder;
+import storage.Storage;
+import utils.Crypto;
 
 public class Main {
 
@@ -37,26 +41,40 @@ public class Main {
 			props.put(ADDRESS_KEY, address);
 		}
 
-		Babel babel = Babel.getInstance();
+        KeyStore truststore = Crypto.getTruststore(props);
+        PublicKey myPublicKey = truststore.getCertificate("node1").getPublicKey();
 
-		DistributedLogManager dlm = new DistributedLogManager();
-		ReplicationProtocolPlaceholder rep = new ReplicationProtocolPlaceholder();
-		CrashFaultReliableBroadcastProtocol bcast = new CrashFaultReliableBroadcastProtocol();
-		
-		//To simplify lets use this protocol again
-		StaticMembershipProtocol smp = new StaticMembershipProtocol();
-		
-		babel.registerProtocol(dlm);
-		babel.registerProtocol(rep);
-		babel.registerProtocol(bcast);
-		
-		babel.registerProtocol(smp);
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(myPublicKey.getEncoded());
+        StringBuilder hex = new StringBuilder();
+        for (byte b : hash) hex.append(String.format("%02x", b));
+        System.out.println("[WRITER] Public key fingerprint (SHA-256): " + hex);
 
-		dlm.init(props);
-		rep.init(props);
-		bcast.init(props);
-		
-		smp.init(props);
+
+        Babel babel = Babel.getInstance();
+        Storage s = new Storage();
+        babel.registerProtocol(s);
+
+        s.init(props);
+
+//		DistributedLogManager dlm = new DistributedLogManager();
+//		ReplicationProtocolPlaceholder rep = new ReplicationProtocolPlaceholder();
+//		CrashFaultReliableBroadcastProtocol bcast = new CrashFaultReliableBroadcastProtocol();
+//
+//		//To simplify lets use this protocol again
+//		StaticMembershipProtocol smp = new StaticMembershipProtocol();
+//
+//		babel.registerProtocol(dlm);
+//		babel.registerProtocol(rep);
+//		babel.registerProtocol(bcast);
+//
+//		babel.registerProtocol(smp);
+//
+//		dlm.init(props);
+//		rep.init(props);
+//		bcast.init(props);
+//
+//		smp.init(props);
 
 		babel.start();
 		System.err.println("Babel has started...");

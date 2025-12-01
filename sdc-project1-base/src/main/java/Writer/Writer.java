@@ -11,12 +11,14 @@ import membership.staticmembership.message.HelloMessage;
 import membership.staticmembership.message.HelloReplyMessage;
 import membership.staticmembership.message.ReplyMessage;
 import messages.ReadAcknowledge;
+import messages.Write;
 import messages.WriteAcknowledge;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import pt.unl.fct.di.novasys.babel.core.GenericProtocol;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
 import pt.unl.fct.di.novasys.babel.generic.ProtoMessage;
+import pt.unl.fct.di.novasys.channel.simpleclientserver.SimpleClientChannel;
 import pt.unl.fct.di.novasys.channel.tcp.TCPChannel;
 import pt.unl.fct.di.novasys.network.data.Host;
 import utils.Crypto;
@@ -37,7 +39,10 @@ public class Writer extends GenericProtocol {
 	public static final short PROTO_ID = 1001;
 
     public final static String PAR_MYHOST = "membership.myhost";
-    public final static String STORAGE = "storage";
+    public final static String STORAGE = "storage.services";
+
+    public static final String ADDRESS_KEY = "address";
+    public static final String SERVER_PORT_KEY = "server_port";
 
     private HashSet<UUID> delivered;
 	private HashSet<Host> neighbors;
@@ -59,9 +64,9 @@ public class Writer extends GenericProtocol {
 	private final Logger logger = LogManager.getLogger(Writer.class);
 
     //Shamir
-    private final Scheme scheme;
+    private Scheme scheme;
     private int threshold;
-    private Host[] servers;
+    private List<Host> servers;
 	
 	public Writer() {
 		super(PROTO_NAME, PROTO_ID);
@@ -77,10 +82,12 @@ public class Writer extends GenericProtocol {
         this.myIdentifier = null;
         this.filesVersions = new HashMap<>();
 
+        this.servers = new ArrayList<>();
+
         //TRATAR DA PARTE DOS SERVERS
-        int f = (servers.length-1)/3;
+        int f = 0;
         this.threshold = f + 1;
-        this.scheme = new Scheme(new SecureRandom(), servers.length, threshold);
+        this.scheme = null;
 
     }
 
@@ -115,17 +122,25 @@ public class Writer extends GenericProtocol {
         this.mySelf = new Host(InetAddress.getByName(hostElements[0]), Short.parseShort(hostElements[1]));
 
         Properties channelProps = new Properties();
-        channelProps.put(TCPChannel.ADDRESS_KEY, this.mySelf.getAddress().toString().replace("/", ""));
-        channelProps.put(TCPChannel.PORT_KEY, this.mySelf.getPort() + "");
+//        channelProps.put(TCPChannel.ADDRESS_KEY, props.getProperty(ADDRESS_KEY));
+//        channelProps.put(TCPChannel.PORT_KEY, props.getProperty(SERVER_PORT_KEY));
+        channelProps.put(SimpleClientChannel.ADDRESS_KEY, props.getProperty(ADDRESS_KEY));
+        channelProps.put(SimpleClientChannel.PORT_KEY, props.getProperty(SERVER_PORT_KEY));
 
-        channelID = createChannel(TCPChannel.NAME, channelProps);
+
+        channelID = createChannel(SimpleClientChannel.NAME, channelProps);
 
         String[] storageList = props.getProperty(STORAGE).split(",");
-        for (String storage : storageList) {
-            hostElements = storage.split(":");
+        for(int i = 0; i < storageList.length; i++){
+            hostElements = storageList[i].split(":");
             Host candidate = new Host(InetAddress.getByName(hostElements[0]), Short.parseShort(hostElements[1]));
-            //add to servers the host
+            servers.add(candidate);
         }
+
+
+        int f = (servers.size()-1)/3;
+        this.threshold = f + 1;
+        this.scheme = new Scheme(new SecureRandom(), servers.size(), threshold);
 
 
         //Messages
@@ -133,9 +148,13 @@ public class Writer extends GenericProtocol {
         registerMessageSerializer(channelID, ReadAcknowledge.MESSAGE_ID, ReadAcknowledge.serializer);
 
 
-        /*-------------------- Register Message Handlers ------------------------------- */
         registerMessageHandler(channelID, WriteAcknowledge.MESSAGE_ID, this::uponReceiveWriteAck);
         registerMessageHandler(channelID, ReadAcknowledge.MESSAGE_ID, this::uponReceiveReadAck);
+
+
+        for(Host host : servers){
+            openConnection(host, channelID);
+        }
 	}
 
     private void uponReceiveReadAck(ProtoMessage protoMessage, Host host, short i, int i1) {
@@ -186,6 +205,14 @@ public class Writer extends GenericProtocol {
             byte[] fileBytes = Files.readAllBytes(path);
 
             // TODO: cifrar, Shamir, enviar mensagens
+
+            Write msg = new Write(myIdentifier, fileBytes, filename);
+
+            for(Host h: servers){
+                sendMessage(msg, h);
+                System.out.println("Mensagem enviada para: " + h.toString());
+            }
+
 
             System.out.println("[WRITER] Ready to upload: " + filename);
 

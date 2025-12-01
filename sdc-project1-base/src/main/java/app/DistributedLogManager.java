@@ -91,14 +91,12 @@ public class DistributedLogManager extends GenericProtocol {
 			System.err.println("The configuration named '" + SERVER_PORT_KEY + "' is mandatory for the operation of the system.");
 			System.exit(1);
 		}
-		
-		
+
 		Properties serverProps = new Properties();
 		serverProps.put(SimpleServerChannel.ADDRESS_KEY, props.getProperty(ADDRESS_KEY));
 		serverProps.setProperty(SimpleServerChannel.PORT_KEY, props.getProperty(SERVER_PORT_KEY));
 
 		clientChannel = createChannel(SimpleServerChannel.NAME, serverProps);
-
 
 		registerMessageSerializer(clientChannel, AppendToLog.MESSAGE_ID, AppendToLog.serializer);
 		registerMessageSerializer(clientChannel, ReadLogEntryRequest.MESSAGE_ID, ReadLogEntryRequest.serializer);
