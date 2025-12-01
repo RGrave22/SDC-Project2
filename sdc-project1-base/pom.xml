@@ -106,6 +106,14 @@
 			<artifactId>babel-core</artifactId>
 			<version>1.0.5</version>
 		</dependency>
+
+        <dependency>
+            <groupId>com.codahale</groupId>
+            <artifactId>shamir</artifactId>
+            <version>0.7.0</version>
+        </dependency>
 	</dependencies>
+
+
   
 </project>

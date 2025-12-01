@@ -8,6 +8,8 @@ import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.Properties;
 
+import Reader.Reader;
+import Writer.Writer;
 import app.DistributedLogManager;
 import broadcast.CrashFaultReliableBroadcastProtocol;
 import membership.staticmembership.StaticMembershipProtocol;
@@ -27,6 +29,9 @@ public class Main {
 	
 	public static final String ADDRESS_KEY = "address";
 
+    public static final String WRITER = "writer";
+    public static final String MYSELF = "membership.myhost";
+
 	public static final void main(String[] args) throws IOException, InvalidParameterException, ProtocolAlreadyExistsException, HandlerRegistrationException, GeneralSecurityException {
 		Properties props = Babel.loadConfig(Arrays.copyOfRange(args, 0, args.length), "babel-conf.txt");
 
@@ -37,29 +42,79 @@ public class Main {
 			props.put(ADDRESS_KEY, address);
 		}
 
-		Babel babel = Babel.getInstance();
+        String writer = props.getProperty(WRITER);
+        String mySelf = props.getProperty(MYSELF);
 
-		DistributedLogManager dlm = new DistributedLogManager();
-		ReplicationProtocolPlaceholder rep = new ReplicationProtocolPlaceholder();
-		CrashFaultReliableBroadcastProtocol bcast = new CrashFaultReliableBroadcastProtocol();
+        Babel babel = Babel.getInstance();
+
+        if(mySelf.equals(writer)){
+            Writer w = new Writer();
+            babel.registerProtocol(w);
+            w.init(props);
+            babel.start();
+            System.err.println("Babel has started...");
+
+            java.util.Scanner scanner = new java.util.Scanner(System.in);
+
+            while (true) {
+                System.out.print("> ");
+                String input = scanner.nextLine().trim();
+                String[] cmd = input.split("\\s+", 2);
+                String command = cmd[0].toUpperCase();
+                String argument = (cmd.length > 1) ? cmd[1] : "";
+
+                switch (command) {
+                    case "UPLOAD":
+                        w.uploadFile(argument);
+                        break;
+                    case "DOWNLOAD":
+                        w.downloadFile(argument);
+
+                        break;
+                    case "DELETE":
+                        //TODO
+                        break;
+                    case "LIST":
+                        //TODO
+                        break;
+                    case "QUIT":
+                        System.out.println("Leaving...");
+                        System.exit(0);
+                        break;
+                    default:
+                        System.out.println("Unknown Command: " + command);
+                }
+            }
+
+        }else{
+            Reader r = new Reader();
+            babel.registerProtocol(r);
+            r.init(props);
+            babel.start();
+            System.err.println("Babel has started...");
+        }
+
+
+//		DistributedLogManager dlm = new DistributedLogManager();
+//		ReplicationProtocolPlaceholder rep = new ReplicationProtocolPlaceholder();
+//		CrashFaultReliableBroadcastProtocol bcast = new CrashFaultReliableBroadcastProtocol();
 		
 		//To simplify lets use this protocol again
-		StaticMembershipProtocol smp = new StaticMembershipProtocol();
+//		StaticMembershipProtocol smp = new StaticMembershipProtocol();
 		
-		babel.registerProtocol(dlm);
-		babel.registerProtocol(rep);
-		babel.registerProtocol(bcast);
+//		babel.registerProtocol(dlm);
+//		babel.registerProtocol(rep);
+//		babel.registerProtocol(bcast);
 		
-		babel.registerProtocol(smp);
+//		babel.registerProtocol(smp);
 
-		dlm.init(props);
-		rep.init(props);
-		bcast.init(props);
-		
-		smp.init(props);
+//		dlm.init(props);
+//		rep.init(props);
+//		bcast.init(props);
 
-		babel.start();
-		System.err.println("Babel has started...");
+//		smp.init(props);
+
+
 
 	}
 

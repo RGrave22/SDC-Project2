@@ -13,6 +13,7 @@ public class Crypto {
     public static final String KEY_STORE_PASSWORD_KEY = "key_store_password";
     public static final String TRUST_STORE_LOCATION_KEY = "trust_store";
     public static final String TRUST_STORE_PASSWORD_KEY = "trust_store_password";
+    public static final String ALL_CRYPTO_NAME = "crypto_names";
 
 
     public static PrivateKey getPrivateKey(String me, Properties props) throws

@@ -3,18 +3,23 @@
 # Distributed Log Manager
 address 127.0.0.1
 
-#server_port 5001 - this one is different for each process on the same machine and you must provide
+#server_port 5100 - this one is different for each process on the same machine and you must provide
 
 # Broadcast Protocol Configuration
 
 # Static Membership Protocol Configuration
 
 # membership.myhost - this one is different for each process and you must provide
+# EMBAIXO - READERS e WRITER
 membership.neighbors 127.0.0.1:5000,127.0.0.1:6000,127.0.0.1:7000,127.0.0.1:8000
+writer 127.0.0.1:5000
+
+storage.services 127.0.0.1:5001,127.0.0.1:6001,127.0.0.1:7001,127.0.0.1:8001
 
 # Crypto configuration parameters
 
 # crypto_name - this one is different for each process and you have to provide in the command line
+crypto_names node1,node2,node3,node4
 key_store_folder crypto-material
 key_store_password password
 trust_store crypto-material/truststore.ks
