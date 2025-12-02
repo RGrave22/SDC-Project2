@@ -127,8 +127,8 @@ public class Writer extends GenericProtocol {
         this.mySelf = new Host(InetAddress.getByName(hostElements[0]), Short.parseShort(hostElements[1]));
 
         String[] storageList = props.getProperty(STORAGE).split(",");
-        for (int i = 0; i < storageList.length; i++) {
-            String [] e = storageList[i].split(":");
+        for (String s : storageList) {
+            String[] e = s.split(":");
             Host candidate = new Host(InetAddress.getByName(e[0]), Short.parseShort(e[1]));
             // System.out.println("Candidate: " + candidate.toString());
             // System.out.println("Address: " + candidate.getAddress());
@@ -145,9 +145,9 @@ public class Writer extends GenericProtocol {
         for (int i = 0; i < servers.size(); i++) {
 
             Properties channelProps = new Properties();
-            System.out.println("Candidate: " + servers.get(i).toString());
-            System.out.println("Address: " + servers.get(i).getAddress());
-            System.out.println("Port: " + servers.get(i).getPort());
+            // System.out.println("Candidate: " + servers.get(i).toString());
+            // System.out.println("Address: " + servers.get(i).getAddress());
+            // System.out.println("Port: " + servers.get(i).getPort());
             channelProps.put(SimpleClientChannel.ADDRESS_KEY, servers.get(i).getAddress().getHostAddress());
             channelProps.put(SimpleClientChannel.PORT_KEY, String.valueOf(servers.get(i).getPort()));
 
@@ -172,7 +172,7 @@ public class Writer extends GenericProtocol {
     }
 
     private void uponReceiveWriteAck(ProtoMessage protoMessage, Host host, short i, int i1) {
-
+        System.out.println("Epá cheguei tá fixe");
     }
 
     public void uploadFile(String filename) {
