@@ -44,6 +44,8 @@ public class Writer extends GenericProtocol {
     public static final String ADDRESS_KEY = "address";
     public static final String SERVER_PORT_KEY = "server_port";
 
+    public final static short APP_SERVER_PROTO = 300;
+
     private HashSet<UUID> delivered;
     private HashSet<Host> neighbors;
     private HashMap<Host, PublicKey> publicKeys;
@@ -60,6 +62,7 @@ public class Writer extends GenericProtocol {
     private static final String UPLOAD_DIR = "uploaded_files";
 
     private int channelID;
+    private int[] hostChannels;
 
     private final Logger logger = LogManager.getLogger(Writer.class);
 
@@ -123,18 +126,13 @@ public class Writer extends GenericProtocol {
         String[] hostElements = props.getProperty(PAR_MYHOST).split(":");
         this.mySelf = new Host(InetAddress.getByName(hostElements[0]), Short.parseShort(hostElements[1]));
 
-        Properties channelProps = new Properties();
-//        channelProps.put(TCPChannel.ADDRESS_KEY, props.getProperty(ADDRESS_KEY));
-//        channelProps.put(TCPChannel.PORT_KEY, props.getProperty(SERVER_PORT_KEY));
-        channelProps.put(SimpleClientChannel.ADDRESS_KEY, props.getProperty(ADDRESS_KEY));
-        channelProps.put(SimpleClientChannel.PORT_KEY, props.getProperty(SERVER_PORT_KEY));
-
-        channelID = createChannel(SimpleClientChannel.NAME, channelProps);
-
         String[] storageList = props.getProperty(STORAGE).split(",");
         for (int i = 0; i < storageList.length; i++) {
-            hostElements = storageList[i].split(":");
-            Host candidate = new Host(InetAddress.getByName(hostElements[0]), Short.parseShort(hostElements[1]));
+            String [] e = storageList[i].split(":");
+            Host candidate = new Host(InetAddress.getByName(e[0]), Short.parseShort(e[1]));
+            // System.out.println("Candidate: " + candidate.toString());
+            // System.out.println("Address: " + candidate.getAddress());
+            // System.out.println("Port: " + candidate.getPort());
             servers.add(candidate);
         }
 
@@ -142,18 +140,30 @@ public class Writer extends GenericProtocol {
         this.threshold = f + 1;
         this.scheme = new Scheme(new SecureRandom(), servers.size(), threshold);
 
-        //Messages
-        registerMessageSerializer(channelID, WriteAcknowledge.MESSAGE_ID, WriteAcknowledge.serializer);
-        registerMessageSerializer(channelID, ReadAcknowledge.MESSAGE_ID, ReadAcknowledge.serializer);
-        registerMessageSerializer(channelID, Write.MESSAGE_ID, Write.serializer);
+        hostChannels = new int[servers.size()];
 
-        registerMessageHandler(channelID, WriteAcknowledge.MESSAGE_ID, this::uponReceiveWriteAck);
-        registerMessageHandler(channelID, ReadAcknowledge.MESSAGE_ID, this::uponReceiveReadAck);
+        for (int i = 0; i < servers.size(); i++) {
 
-        for (Host host : servers) {
-            openConnection(host, channelID);
-            System.out.println("[WRITER] Estamos a abrir um canal entre: " + host.toString() + ": " + channelID);
-            break;
+            Properties channelProps = new Properties();
+            System.out.println("Candidate: " + servers.get(i).toString());
+            System.out.println("Address: " + servers.get(i).getAddress());
+            System.out.println("Port: " + servers.get(i).getPort());
+            channelProps.put(SimpleClientChannel.ADDRESS_KEY, servers.get(i).getAddress().getHostAddress());
+            channelProps.put(SimpleClientChannel.PORT_KEY, String.valueOf(servers.get(i).getPort()));
+
+            hostChannels[i] = createChannel(SimpleClientChannel.NAME, channelProps);
+
+            //Messages
+            registerMessageSerializer(hostChannels[i], WriteAcknowledge.MESSAGE_ID, WriteAcknowledge.serializer);
+            registerMessageSerializer(hostChannels[i], ReadAcknowledge.MESSAGE_ID, ReadAcknowledge.serializer);
+            registerMessageSerializer(hostChannels[i], Write.MESSAGE_ID, Write.serializer);
+
+            registerMessageHandler(hostChannels[i], WriteAcknowledge.MESSAGE_ID, this::uponReceiveWriteAck);
+            registerMessageHandler(hostChannels[i], ReadAcknowledge.MESSAGE_ID, this::uponReceiveReadAck);
+
+            openConnection(servers.get(i), hostChannels[i]);
+            System.out.println("[WRITER] Estamos a abrir um canal entre: " + servers.get(i).toString() + ": " + channelID);
+
         }
     }
 
@@ -206,10 +216,9 @@ public class Writer extends GenericProtocol {
             // TODO: cifrar, Shamir, enviar mensagens
             Write msg = new Write(myIdentifier, fileBytes, filename);
 
-            for (Host h : servers) {
-                sendMessage(channelID, msg, (short) 300, h, 0);
-                System.out.println("Mensagem enviada para: " + h.toString());
-                break;
+            for (int i = 0; i < servers.size(); i++) {
+                sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
+                System.out.println("Mensagem enviada para: " + servers.get(i).toString());
             }
 
             System.out.println("[WRITER] Ready to upload: " + filename);
