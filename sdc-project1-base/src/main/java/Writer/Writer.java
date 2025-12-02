@@ -4,7 +4,9 @@ import Writer.timers.ExpiredOperation;
 import broadcast.messages.BroadcastMessage;
 import broadcast.notifications.DeliveryNotification;
 import broadcast.requests.BroadcastRequest;
+
 import com.codahale.shamir.Scheme;
+
 import common.events.ChannelAvailable;
 import common.events.NeighborDown;
 import common.events.NeighborUp;
@@ -14,8 +16,10 @@ import membership.staticmembership.message.ReplyMessage;
 import messages.ReadAcknowledge;
 import messages.Write;
 import messages.WriteAcknowledge;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+
 import pt.unl.fct.di.novasys.babel.core.GenericProtocol;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
 import pt.unl.fct.di.novasys.babel.generic.ProtoMessage;
@@ -23,20 +27,25 @@ import pt.unl.fct.di.novasys.babel.generic.ProtoTimer;
 import pt.unl.fct.di.novasys.channel.simpleclientserver.SimpleClientChannel;
 import pt.unl.fct.di.novasys.channel.tcp.TCPChannel;
 import pt.unl.fct.di.novasys.network.data.Host;
-import sun.jvm.hotspot.oops.Metadata;
 import utils.Crypto;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
+
 import java.io.IOException;
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.*;
 import java.security.cert.CertificateException;
 import java.util.*;
+
+import messages.ReadMetadataAcknowledge;
+import messages.WriteMetadata;
+import messages.WriteMetadataAcknowledge;
 
 public class Writer extends GenericProtocol {
 
@@ -47,7 +56,6 @@ public class Writer extends GenericProtocol {
     public final static String WRITERS = "membership.neighbors";
     public final static String STORAGE = "storage.services";
     public final static String OTHERS = "crypto_names";
-
 
     public static final String ADDRESS_KEY = "address";
     public static final String SERVER_PORT_KEY = "server_port";
@@ -76,6 +84,7 @@ public class Writer extends GenericProtocol {
 
     //Shamir
     private Scheme scheme;
+    private int f;
     private int threshold;
     private List<Host> servers;
 
@@ -86,7 +95,6 @@ public class Writer extends GenericProtocol {
 
     private Map<UUID, List<Host>> pendingAcks;
     public boolean isDoingOp = false;
-
 
     public Writer() {
         super(PROTO_NAME, PROTO_ID);
@@ -106,7 +114,7 @@ public class Writer extends GenericProtocol {
         this.servers = new ArrayList<>();
 
         //TRATAR DA PARTE DOS SERVERS
-        int f = 0;
+        this.f = 0;
         this.threshold = f + 1;
         this.scheme = null;
 
@@ -175,7 +183,7 @@ public class Writer extends GenericProtocol {
             throw new RuntimeException(e);
         }
 
-        int f = (servers.size() - 1) / 3;
+        f = (servers.size() - 1) / 3;
         this.threshold = f + 1;
         this.scheme = new Scheme(new SecureRandom(), servers.size(), threshold);
 
@@ -195,10 +203,15 @@ public class Writer extends GenericProtocol {
             //Messages
             registerMessageSerializer(hostChannels[i], WriteAcknowledge.MESSAGE_ID, WriteAcknowledge.serializer);
             registerMessageSerializer(hostChannels[i], ReadAcknowledge.MESSAGE_ID, ReadAcknowledge.serializer);
+            registerMessageSerializer(hostChannels[i], WriteMetadata.MESSAGE_ID, WriteMetadata.serializer);
+            registerMessageSerializer(hostChannels[i], WriteMetadataAcknowledge.MESSAGE_ID, WriteMetadataAcknowledge.serializer);
+            //registerMessageSerializer(hostChannels[i], ReadMetadataAcknowledge.MESSAGE_ID, ReadMetadataAcknowledge.serializer);
             registerMessageSerializer(hostChannels[i], Write.MESSAGE_ID, Write.serializer);
 
             registerMessageHandler(hostChannels[i], WriteAcknowledge.MESSAGE_ID, this::uponReceiveWriteAck);
             registerMessageHandler(hostChannels[i], ReadAcknowledge.MESSAGE_ID, this::uponReceiveReadAck);
+            registerMessageHandler(hostChannels[i], WriteMetadataAcknowledge.MESSAGE_ID, this::uponReceiveMetadataWriteAck);
+            //registerMessageHandler(hostChannels[i], ReadMetadataAcknowledge.MESSAGE_ID, this::uponReceiveMetadataReadAck);
 
             openConnection(servers.get(i), hostChannels[i]);
             System.out.println("[WRITER] Estamos a abrir um canal entre: " + servers.get(i).toString() + ": " + channelID);
@@ -218,15 +231,108 @@ public class Writer extends GenericProtocol {
 
     }
 
-    private void uponReceiveWriteAck(ProtoMessage protoMessage, Host host, short i, int i1) {
-        System.out.println("Epá cheguei tá fixe");
-        WriteAcknowledge writeAcknowledge = (WriteAcknowledge) protoMessage;
+    private void uponReceiveMetadataWriteAck(ProtoMessage protoMessage, Host host, short i, int i1) {
+        System.out.println("Recebeu Ack final");
+    }
 
-
+    private void uponReceiveMetadataReadAck(ProtoMessage protoMessage, Host host, short i, int i1) {
 
     }
 
+    private void uponReceiveWriteAck(ProtoMessage ack, Host host, short i, int i1) {
+        System.out.println("Epá cheguei tá fixe");
+        WriteAcknowledge writeAcknowledge = (WriteAcknowledge) ack;
+        List<Host> serversAux = pendingAcks.get(writeAcknowledge.getRequestID());
+        System.out.println("Lista que ainda  tenho: " + serversAux);
+
+        if (serversAux != null) {
+            serversAux.remove(host);
+
+            int remaining = serversAux.size();
+
+            System.out.println("[WRITER] ACK from " + host + ", remaining: " + remaining + "/" + servers.size());
+
+            // Quando tiver quorum (n-f respostas)
+            if (remaining <= f) {
+                System.out.println("[WRITER] Quorum reached! Sending metadata files...");
+
+                clearTimeout();
+
+                String filename = writeAcknowledge.getFilename();
+
+                try {
+                    System.out.println("Severs: " + servers);
+                    // Para cada servidor, envia o metadata correspondente
+                    for (int j = 0; j < servers.size(); j++) {
+                        Path metadataPath = Paths.get(UPLOAD_DIR + "-" + myIdentifier, j + "-metadata-" + filename);
+                        System.out.println("PATH: " + metadataPath);
+
+                        if (Files.exists(metadataPath)) {
+                            // 1. LER BYTES
+                            byte[] metadataBytes = Files.readAllBytes(metadataPath);
+
+                            // 2. CONVERTER PARA STRING
+                            String metadataContent = new String(metadataBytes, StandardCharsets.UTF_8);
+
+                            // 3. MOSTRAR CONTEÚDO
+                            System.out.println("FILE: " + metadataPath.getFileName() + ": " + metadataContent);
+
+                            // 4. PARSE (versão|hash|shareIndex|keyShareBase64)
+                            String[] parts = metadataContent.split("\\|");
+                            if (parts.length == 4) {
+                                int version = Integer.parseInt(parts[0]);
+                                String fileHash = parts[1];
+                                byte[] fileHashDecored = java.util.Base64.getDecoder().decode(fileHash);
+                                int shareIndex = Integer.parseInt(parts[2]);
+                                String keyShareB64 = parts[3];
+
+                                Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+                                cipher.init(Cipher.ENCRYPT_MODE, myPrivateKey);
+                                byte[] encryptedMetadata = cipher.doFinal(metadataBytes);
+
+                                // 5. ENVIAR PARA SERVIDOR
+                                WriteMetadata metadataMsg = new WriteMetadata(
+                                        filename, version, encryptedMetadata, fileHashDecored
+                                );
+
+                                sendMessage(hostChannels[j], metadataMsg, APP_SERVER_PROTO, servers.get(j), 0);
+
+                                System.out.println("Parsed → v" + version
+                                        + " | hash=" + fileHash.substring(0, 16) + "..."
+                                        + " | share#" + shareIndex
+                                        + " | size=" + keyShareB64.length() + "b");
+                            }
+
+                        } else {
+                            System.err.println("Metadata NOT FOUND: " + metadataPath);
+                        }
+                    }
+
+                    System.out.println("[WRITER] All metadata files sent!");
+
+                    // Remove do mapa de pendentes
+                    pendingAcks.remove(writeAcknowledge.getRequestID());
+
+                } catch (IOException e) {
+                    System.err.println("[WRITER] Error reading/sending metadata files: " + e.getMessage());
+                    e.printStackTrace();
+                } catch (Exception e) {
+                    System.err.println("[WRITER] Error reading/sending metadata files: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private void clearTimeout() {
+        if (timeoutTimerID != -1) {
+            cancelTimer(timeoutTimerID);
+            this.timeoutTimerID = -1;
+        }
+    }
+
     public void uploadFile(String filename) {
+
         if (filename == null || filename.isEmpty()) {
             System.out.println("Usage: UPLOAD <filename>");
             return;
@@ -235,6 +341,7 @@ public class Writer extends GenericProtocol {
         System.out.println("[WRITER] Uploading file: " + filename);
 
         try {
+
             Path path = Paths.get(UPLOAD_DIR + "-" + myIdentifier, filename);
 
             if (!filesVersions.containsKey(filename)) {
@@ -280,36 +387,33 @@ public class Writer extends GenericProtocol {
             Map<Integer, byte[]> keyShares = splitKey(encryptionKey);
 
             //Metadata File
-
-
-
             Write msg = new Write(myIdentifier, encryptedFile, filename);
 
             for (int i = 0; i < servers.size(); i++) {
-                Path metadataPath = Paths.get(UPLOAD_DIR + "-" + myIdentifier, i+"-metadata-" + filename);
-
+                Path metadataPath = Paths.get(UPLOAD_DIR + "-" + myIdentifier, i + "-metadata-" + filename);
 
                 StringBuilder metadataContent = new StringBuilder();
                 metadataContent.append(filesVersions.get(filename)).append("|");
                 metadataContent.append(fileHash).append("|");
-                metadataContent.append(i+"|");
+                metadataContent.append(i + "|");
 
-                byte[] keyShareForThisServer = keyShares.get(i);
+                byte[] keyShareForThisServer = keyShares.get(i + 1);
                 String keyShareBase64 = java.util.Base64.getEncoder().encodeToString(keyShareForThisServer);
                 metadataContent.append(keyShareBase64);
-
 
                 Files.write(metadataPath, metadataContent.toString().getBytes());
                 System.out.println("[WRITER] Metadata created: " + metadataPath);
                 System.out.println("[WRITER] Metadata content: " + metadataContent.toString().substring(0, 100) + "...");
 
-
                 sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
                 System.out.println("Mensagem enviada para: " + servers.get(i).toString());
             }
 
+            List<Host> servers2 = new ArrayList<>(servers);
+            pendingAcks.put(msg.getRequestID(), servers2);
+
             this.setIsDoingOp(true);
-            this.timeoutTimerID = setupTimer(new ExpiredOperation(msg.getRequestID(),msg), operation_timeout);
+            this.timeoutTimerID = setupTimer(new ExpiredOperation(msg.getRequestID(), msg), operation_timeout);
             System.out.println("[WRITER] Ready to upload: " + filename);
 
         } catch (IOException e) {
@@ -340,7 +444,6 @@ public class Writer extends GenericProtocol {
         this.isDoingOp = isDoingOp;
     }
 
-
     //Shamir
     private Map<Integer, byte[]> splitKey(SecretKey encryptionKey) {
         byte[] keyBytes = encryptionKey.getEncoded();
@@ -365,7 +468,9 @@ public class Writer extends GenericProtocol {
         StringBuilder hexString = new StringBuilder();
         for (byte b : hash) {
             String hex = Integer.toHexString(0xff & b);
-            if (hex.length() == 1) hexString.append('0');
+            if (hex.length() == 1) {
+                hexString.append('0');
+            }
             hexString.append(hex);
         }
         return hexString.toString();

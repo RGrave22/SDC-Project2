@@ -16,8 +16,12 @@ import org.apache.logging.log4j.Logger;
 
 import messages.Read;
 import messages.ReadAcknowledge;
+import messages.ReadMetadata;
+import messages.ReadMetadataAcknowledge;
 import messages.Write;
 import messages.WriteAcknowledge;
+import messages.WriteMetadata;
+import messages.WriteMetadataAcknowledge;
 import pt.unl.fct.di.novasys.babel.core.GenericProtocol;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
 import pt.unl.fct.di.novasys.babel.generic.ProtoMessage;
@@ -79,11 +83,16 @@ public class Storage extends GenericProtocol {
         registerMessageSerializer(channelID, Read.MESSAGE_ID, Read.serializer);
         registerMessageSerializer(channelID, WriteAcknowledge.MESSAGE_ID, WriteAcknowledge.serializer);
         registerMessageSerializer(channelID, ReadAcknowledge.MESSAGE_ID, ReadAcknowledge.serializer);
+        registerMessageSerializer(channelID, WriteMetadata.MESSAGE_ID, WriteMetadata.serializer);
+        //registerMessageSerializer(channelID, ReadAcknowledge.MESSAGE_ID, ReadMetadata.serializer);
+        registerMessageSerializer(channelID, WriteMetadataAcknowledge.MESSAGE_ID, WriteMetadataAcknowledge.serializer);
+        // registerMessageSerializer(channelID, ReadAcknowledge.MESSAGE_ID, ReadMetadataAcknowledge.serializer);
 //        registerMessageSerializer(channelID, HelloReplyMessage.MESSAGE_ID, HelloReplyMessage.serializer);
 //        registerMessageSerializer(channelID, ReplyMessage.MESSAGE_ID, ReplyMessage.serializer);
 
         registerMessageHandler(channelID, Write.MESSAGE_ID, this::uponReceiveWriteMessage);
         registerMessageHandler(channelID, Read.MESSAGE_ID, this::uponReceiveReadMessage);
+        registerMessageHandler(channelID, WriteMetadata.MESSAGE_ID, this::uponReceiveWriteMetadata);
 //        registerMessageHandler(channelID, HelloReplyMessage.MESSAGE_ID, this::uponReceiveHelloReplyMessage);
 //        registerMessageHandler(channelID, ReplyMessage.MESSAGE_ID, this::uponReceiveReplyMessage);
 
@@ -91,8 +100,14 @@ public class Storage extends GenericProtocol {
 
     private void uponReceiveWriteMessage(Write write, Host host, short sourceProto, int channelID) {
         System.out.println("RECEBI O WRITE");
-        WriteAcknowledge wAck = new WriteAcknowledge(write.getFilename(), true, this.mySelf);
-        sendMessage(channelID, wAck, APP_CLIENT_READER, host, 0);
+        WriteAcknowledge wAck = new WriteAcknowledge(write.getFilename(), write.getRequestID(), true, this.mySelf);
+        sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
+    }
+
+    private void uponReceiveWriteMetadata(WriteMetadata writeM, Host host, short sourceProto, int channelID) {
+        System.out.println("RECEBI O WRITEMETADATA");
+        WriteMetadataAcknowledge wMAck = new WriteMetadataAcknowledge(writeM.getFilename(), true, this.mySelf);
+        sendMessage(channelID, wMAck, APP_CLIENT_WRITER, host, 0);
     }
 
     private void uponReceiveReadMessage(ProtoMessage protoMessage, Host host, short i, int i1) {

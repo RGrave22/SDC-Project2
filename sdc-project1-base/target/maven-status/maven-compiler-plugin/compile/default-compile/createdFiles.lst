@@ -33,6 +33,7 @@ utils\PublicKeyHelper.class
 messages\WriteMetadata.class
 Main.class
 app\messages\client\LogEntry.class
+Writer\timers\ExpiredOperation.class
 membership\staticmembership\message\ReplyMessage.class
 app\messages\client\ReadLogEntryRequest.class
 Writer\Writer.class

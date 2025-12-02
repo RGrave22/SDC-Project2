@@ -1,10 +1,10 @@
 package messages;
 
+import java.io.IOException;
+
 import io.netty.buffer.ByteBuf;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedMessageSerializer;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedProtoMessage;
-
-import java.io.IOException;
 
 public class WriteMetadata extends SignedProtoMessage {
     public final static short MESSAGE_ID = 703;
@@ -13,15 +13,15 @@ public class WriteMetadata extends SignedProtoMessage {
 
     private final int version;
 
-    private final byte[] keyShare;
+    private final byte[] fileBytes;
 
     private final byte[] digest;
 
-    public WriteMetadata(String filename, int version,byte[] keyShare, byte[] digest) {
+    public WriteMetadata(String filename, int version,byte[] fileBytes, byte[] digest) {
         super(MESSAGE_ID);
         this.filename = filename;
         this.version = version;
-        this.keyShare = keyShare;
+        this.fileBytes = fileBytes;
         this.digest = digest;
     }
 
@@ -33,8 +33,8 @@ public class WriteMetadata extends SignedProtoMessage {
         return version;
     }
 
-    public byte[] getKeyShare() {
-        return keyShare;
+    public byte[] getFileBytes() {
+        return fileBytes;
     }
 
     public byte[] getDigest() {
@@ -53,11 +53,11 @@ public class WriteMetadata extends SignedProtoMessage {
             // Versions
             out.writeInt(msg.version);
 
-            // keyShare
-            out.writeInt(msg.keyShare.length);
-            out.writeBytes(msg.keyShare);
+            // fileBytes
+            out.writeInt(msg.fileBytes.length);
+            out.writeBytes(msg.fileBytes);
 
-            // keyShare
+            // fileBytes
             out.writeInt(msg.digest.length);
             out.writeBytes(msg.digest);
 
@@ -76,17 +76,17 @@ public class WriteMetadata extends SignedProtoMessage {
             // Client ID
             int version = in.readInt();
 
-            // keyShare
+            // fileBytes
             len = in.readInt();
-            byte[] keyShare = new byte[len];
-            in.readBytes(keyShare);
+            byte[] fileBytes = new byte[len];
+            in.readBytes(fileBytes);
 
             // Digest
             len = in.readInt();
             byte[] digest = new byte[len];
             in.readBytes(digest);
 
-            return new WriteMetadata(filename, version, keyShare, digest);
+            return new WriteMetadata(filename, version, fileBytes, digest);
         }
     };
 
