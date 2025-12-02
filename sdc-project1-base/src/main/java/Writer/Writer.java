@@ -1,5 +1,6 @@
 package Writer;
 
+import Writer.timers.ExpiredOperation;
 import broadcast.messages.BroadcastMessage;
 import broadcast.notifications.DeliveryNotification;
 import broadcast.requests.BroadcastRequest;
@@ -18,11 +19,15 @@ import org.apache.logging.log4j.Logger;
 import pt.unl.fct.di.novasys.babel.core.GenericProtocol;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
 import pt.unl.fct.di.novasys.babel.generic.ProtoMessage;
+import pt.unl.fct.di.novasys.babel.generic.ProtoTimer;
 import pt.unl.fct.di.novasys.channel.simpleclientserver.SimpleClientChannel;
 import pt.unl.fct.di.novasys.channel.tcp.TCPChannel;
 import pt.unl.fct.di.novasys.network.data.Host;
+import sun.jvm.hotspot.oops.Metadata;
 import utils.Crypto;
 
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -39,7 +44,10 @@ public class Writer extends GenericProtocol {
     public static final short PROTO_ID = 1001;
 
     public final static String PAR_MYHOST = "membership.myhost";
+    public final static String WRITERS = "membership.neighbors";
     public final static String STORAGE = "storage.services";
+    public final static String OTHERS = "crypto_names";
+
 
     public static final String ADDRESS_KEY = "address";
     public static final String SERVER_PORT_KEY = "server_port";
@@ -47,7 +55,7 @@ public class Writer extends GenericProtocol {
     public final static short APP_SERVER_PROTO = 300;
 
     private HashSet<UUID> delivered;
-    private HashSet<Host> neighbors;
+    private List<Host> neighbors;
     private HashMap<Host, PublicKey> publicKeys;
 
     private Host mySelf;
@@ -71,12 +79,22 @@ public class Writer extends GenericProtocol {
     private int threshold;
     private List<Host> servers;
 
+    //timer
+    private long operation_timeout;
+    private long timeoutTimerID;
+    public final static String OPERATION_TIMEOUT = "operation_timeout";
+
+    private Map<UUID, List<Host>> pendingAcks;
+    public boolean isDoingOp = false;
+
+
     public Writer() {
         super(PROTO_NAME, PROTO_ID);
 
         delivered = new HashSet<UUID>();
-        neighbors = new HashSet<Host>();
+        neighbors = new ArrayList<>();
         publicKeys = new HashMap<Host, PublicKey>();
+        pendingAcks = new HashMap<>();
 
         this.mySelf = null;
         this.myPublicKey = null;
@@ -92,16 +110,50 @@ public class Writer extends GenericProtocol {
         this.threshold = f + 1;
         this.scheme = null;
 
+        //timer
+        this.timeoutTimerID = -1;
+        this.operation_timeout = -1;
+
     }
 
     @Override
     public void init(Properties props) throws HandlerRegistrationException, IOException {
         myIdentifier = props.getProperty(Crypto.CRYPTO_NAME_KEY);
 
+        this.operation_timeout = Long.parseLong(props.getProperty(OPERATION_TIMEOUT));
+
+        String[] writersList = props.getProperty(WRITERS).split(",");
+        for (String s : writersList) {
+            String[] e = s.split(":");
+            Host candidate = new Host(InetAddress.getByName(e[0]), Short.parseShort(e[1]));
+            neighbors.add(candidate);
+        }
+
+        String[] hostElements = props.getProperty(PAR_MYHOST).split(":");
+        this.mySelf = new Host(InetAddress.getByName(hostElements[0]), Short.parseShort(hostElements[1]));
+
+        String[] storageList = props.getProperty(STORAGE).split(",");
+        for (String s : storageList) {
+            String[] e = s.split(":");
+            Host candidate = new Host(InetAddress.getByName(e[0]), Short.parseShort(e[1]));
+            // System.out.println("Candidate: " + candidate.toString());
+            // System.out.println("Address: " + candidate.getAddress());
+            // System.out.println("Port: " + candidate.getPort());
+            servers.add(candidate);
+        }
+
         try {
             this.myPrivateKey = Crypto.getPrivateKey(myIdentifier, props);
             this.truststore = Crypto.getTruststore(props);
             this.myPublicKey = this.truststore.getCertificate(myIdentifier).getPublicKey();
+
+            String[] nodes = props.getProperty(OTHERS).split(",");
+
+            for (int i = 0; i < nodes.length; i++) {
+                PublicKey pk = this.truststore.getCertificate(nodes[i]).getPublicKey();
+                publicKeys.put(neighbors.get(i), pk);
+                System.out.println("Host: " + neighbors.get(i).toString() + " with key of: " + nodes[i]);
+            }
 
             //PARA VERIFICAR SE A KEY ESTA CERTA
             java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
@@ -121,19 +173,6 @@ public class Writer extends GenericProtocol {
             throw new RuntimeException(e);
         } catch (UnrecoverableKeyException e) {
             throw new RuntimeException(e);
-        }
-
-        String[] hostElements = props.getProperty(PAR_MYHOST).split(":");
-        this.mySelf = new Host(InetAddress.getByName(hostElements[0]), Short.parseShort(hostElements[1]));
-
-        String[] storageList = props.getProperty(STORAGE).split(",");
-        for (String s : storageList) {
-            String[] e = s.split(":");
-            Host candidate = new Host(InetAddress.getByName(e[0]), Short.parseShort(e[1]));
-            // System.out.println("Candidate: " + candidate.toString());
-            // System.out.println("Address: " + candidate.getAddress());
-            // System.out.println("Port: " + candidate.getPort());
-            servers.add(candidate);
         }
 
         int f = (servers.size() - 1) / 3;
@@ -165,6 +204,14 @@ public class Writer extends GenericProtocol {
             System.out.println("[WRITER] Estamos a abrir um canal entre: " + servers.get(i).toString() + ": " + channelID);
 
         }
+
+        registerTimerHandler(ExpiredOperation.TIMER_ID, this::handleExpiredTimer);
+
+    }
+
+    private void handleExpiredTimer(ProtoTimer protoTimer, long l) {
+        //TODO PARA QUANDO EXPIRA
+
     }
 
     private void uponReceiveReadAck(ProtoMessage protoMessage, Host host, short i, int i1) {
@@ -173,6 +220,10 @@ public class Writer extends GenericProtocol {
 
     private void uponReceiveWriteAck(ProtoMessage protoMessage, Host host, short i, int i1) {
         System.out.println("Epá cheguei tá fixe");
+        WriteAcknowledge writeAcknowledge = (WriteAcknowledge) protoMessage;
+
+
+
     }
 
     public void uploadFile(String filename) {
@@ -184,7 +235,7 @@ public class Writer extends GenericProtocol {
         System.out.println("[WRITER] Uploading file: " + filename);
 
         try {
-            Path path = Paths.get(UPLOAD_DIR, filename);
+            Path path = Paths.get(UPLOAD_DIR + "-" + myIdentifier, filename);
 
             if (!filesVersions.containsKey(filename)) {
                 byte[] data = new byte[FILE_SIZE];
@@ -210,17 +261,55 @@ public class Writer extends GenericProtocol {
                 System.out.println("[WRITER] File already exists, new version: " + newVersion + " created.");
             }
 
-            // Ler ficheiro do disco para upload
             byte[] fileBytes = Files.readAllBytes(path);
 
-            // TODO: cifrar, Shamir, enviar mensagens
-            Write msg = new Write(myIdentifier, fileBytes, filename);
+            //cria uma simetric key
+            KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+            keyGen.init(256);
+            SecretKey encryptionKey = keyGen.generateKey();
+
+            //encripta o ficheiro
+            Cipher cipher = Cipher.getInstance("AES");
+            cipher.init(Cipher.ENCRYPT_MODE, encryptionKey);
+            byte[] encryptedFile = cipher.doFinal(fileBytes);
+
+            String fileHash = calculateSHA256(fileBytes);
+            System.out.println("[WRITER] File hash: " + fileHash.substring(0, 16) + "...");
+
+            //Parte a chave
+            Map<Integer, byte[]> keyShares = splitKey(encryptionKey);
+
+            //Metadata File
+
+
+
+            Write msg = new Write(myIdentifier, encryptedFile, filename);
 
             for (int i = 0; i < servers.size(); i++) {
+                Path metadataPath = Paths.get(UPLOAD_DIR + "-" + myIdentifier, i+"-metadata-" + filename);
+
+
+                StringBuilder metadataContent = new StringBuilder();
+                metadataContent.append(filesVersions.get(filename)).append("|");
+                metadataContent.append(fileHash).append("|");
+                metadataContent.append(i+"|");
+
+                byte[] keyShareForThisServer = keyShares.get(i);
+                String keyShareBase64 = java.util.Base64.getEncoder().encodeToString(keyShareForThisServer);
+                metadataContent.append(keyShareBase64);
+
+
+                Files.write(metadataPath, metadataContent.toString().getBytes());
+                System.out.println("[WRITER] Metadata created: " + metadataPath);
+                System.out.println("[WRITER] Metadata content: " + metadataContent.toString().substring(0, 100) + "...");
+
+
                 sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
                 System.out.println("Mensagem enviada para: " + servers.get(i).toString());
             }
 
+            this.setIsDoingOp(true);
+            this.timeoutTimerID = setupTimer(new ExpiredOperation(msg.getRequestID(),msg), operation_timeout);
             System.out.println("[WRITER] Ready to upload: " + filename);
 
         } catch (IOException e) {
@@ -243,6 +332,15 @@ public class Writer extends GenericProtocol {
         // TODO
     }
 
+    public boolean getIdDoingOp() {
+        return isDoingOp;
+    }
+
+    public void setIsDoingOp(boolean isDoingOp) {
+        this.isDoingOp = isDoingOp;
+    }
+
+
     //Shamir
     private Map<Integer, byte[]> splitKey(SecretKey encryptionKey) {
         byte[] keyBytes = encryptionKey.getEncoded();
@@ -257,5 +355,19 @@ public class Writer extends GenericProtocol {
         }
 
         return scheme.join(shares);
+    }
+
+    //Hash
+    public String calculateSHA256(byte[] data) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(data);
+
+        StringBuilder hexString = new StringBuilder();
+        for (byte b : hash) {
+            String hex = Integer.toHexString(0xff & b);
+            if (hex.length() == 1) hexString.append('0');
+            hexString.append(hex);
+        }
+        return hexString.toString();
     }
 }

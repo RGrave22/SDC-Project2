@@ -32,6 +32,8 @@ public class Main {
     public static final String WRITER = "writer";
     public static final String MYSELF = "membership.myhost";
 
+
+
 	public static final void main(String[] args) throws IOException, InvalidParameterException, ProtocolAlreadyExistsException, HandlerRegistrationException, GeneralSecurityException {
 		Properties props = Babel.loadConfig(Arrays.copyOfRange(args, 0, args.length), "babel-conf.txt");
 
@@ -47,16 +49,19 @@ public class Main {
 
         Babel babel = Babel.getInstance();
 
-        if(mySelf.equals(writer)){
-            Writer w = new Writer();
-            babel.registerProtocol(w);
-            w.init(props);
-            babel.start();
-            System.err.println("Babel has started...");
+//        if(mySelf.equals(writer)){
 
-            java.util.Scanner scanner = new java.util.Scanner(System.in);
+        Writer w = new Writer();
+        babel.registerProtocol(w);
+        w.init(props);
+        babel.start();
+        System.err.println("Babel has started...");
 
-            while (true) {
+        java.util.Scanner scanner = new java.util.Scanner(System.in);
+
+        while (true) {
+
+            if(!w.getIdDoingOp()) {
                 System.out.print("> ");
                 String input = scanner.nextLine().trim();
                 String[] cmd = input.split("\\s+", 2);
@@ -85,14 +90,15 @@ public class Main {
                         System.out.println("Unknown Command: " + command);
                 }
             }
-
-        }else{
-            Reader r = new Reader();
-            babel.registerProtocol(r);
-            r.init(props);
-            babel.start();
-            System.err.println("Babel has started...");
         }
+
+//        }else{
+//            Reader r = new Reader();
+//            babel.registerProtocol(r);
+//            r.init(props);
+//            babel.start();
+//            System.err.println("Babel has started...");
+//        }
 
 
 //		DistributedLogManager dlm = new DistributedLogManager();
@@ -117,6 +123,9 @@ public class Main {
 
 
 	}
+
+
+
 
     private static String getAddress(String inter) throws SocketException {
         NetworkInterface byName = NetworkInterface.getByName(inter);

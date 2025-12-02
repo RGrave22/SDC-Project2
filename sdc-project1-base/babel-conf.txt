@@ -16,6 +16,8 @@ writer 127.0.0.1:5000
 
 storage.services 127.0.0.1:5100,127.0.0.1:6100,127.0.0.1:7100,127.0.0.1:8100
 
+operation_timeout 1000
+
 # Crypto configuration parameters
 
 # crypto_name - this one is different for each process and you have to provide in the command line
