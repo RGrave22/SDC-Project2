@@ -7,6 +7,7 @@ import pt.unl.fct.di.novasys.network.data.Host;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.util.UUID;
 
 public class WriteMetadataAcknowledge extends SignedProtoMessage {
     public final static short MESSAGE_ID = 704;
@@ -17,11 +18,26 @@ public class WriteMetadataAcknowledge extends SignedProtoMessage {
 
     private final Host server;
 
+    private final UUID requestID;
+
     public WriteMetadataAcknowledge(String filename,  boolean success, Host server) {
         super(MESSAGE_ID);
         this.filename = filename;
         this.success = success;
         this.server = server;
+        this.requestID = UUID.randomUUID();
+    }
+
+    public WriteMetadataAcknowledge(String filename,  boolean success, Host server, UUID requestID) {
+        super(MESSAGE_ID);
+        this.filename = filename;
+        this.success = success;
+        this.server = server;
+        this.requestID = requestID;
+    }
+
+    public UUID getRequestID() {
+        return requestID;
     }
 
     public String getFilename() {
@@ -46,6 +62,10 @@ public class WriteMetadataAcknowledge extends SignedProtoMessage {
                     out.writeInt(filenameBytes.length);
                     out.writeBytes(filenameBytes);
 
+                    //ReqId
+                    out.writeLong(msg.requestID.getMostSignificantBits());
+                    out.writeLong(msg.requestID.getLeastSignificantBits());
+
                     // Success
                     out.writeBoolean(msg.success);
 
@@ -66,6 +86,9 @@ public class WriteMetadataAcknowledge extends SignedProtoMessage {
                     in.readBytes(buffer);
                     String filename = new String(buffer);
 
+                    // ReqId
+                    UUID rID = new UUID(in.readLong(), in.readLong());
+
                     // Success
                     boolean success = in.readBoolean();
 
@@ -80,7 +103,7 @@ public class WriteMetadataAcknowledge extends SignedProtoMessage {
 
                     Host server = new Host(address, port);
 
-                    return new WriteMetadataAcknowledge(filename, success, server);
+                    return new WriteMetadataAcknowledge(filename, success, server, rID);
                 }
             };
 

@@ -2,8 +2,12 @@ package storage;
 
 import java.io.IOException;
 import java.net.InetAddress;
-import java.security.PrivateKey;
-import java.security.PublicKey;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.*;
+import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -27,6 +31,9 @@ import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
 import pt.unl.fct.di.novasys.babel.generic.ProtoMessage;
 import pt.unl.fct.di.novasys.channel.simpleclientserver.SimpleServerChannel;
 import pt.unl.fct.di.novasys.network.data.Host;
+import utils.Crypto;
+
+import javax.crypto.Cipher;
 
 public class Storage extends GenericProtocol {
 
@@ -52,6 +59,8 @@ public class Storage extends GenericProtocol {
 
     private int channelID;
 
+    private KeyStore truststore;
+
     private final Logger logger = LogManager.getLogger(Storage.class);
 
     public Storage() {
@@ -64,6 +73,7 @@ public class Storage extends GenericProtocol {
         this.mySelf = null;
         this.myPublicKey = null;
         this.myPrivateKey = null;
+        this.truststore = null;
     }
 
     @Override
@@ -77,6 +87,18 @@ public class Storage extends GenericProtocol {
         channelProps.put(SimpleServerChannel.PORT_KEY, props.getProperty(SERVER_PORT_KEY));
 
         channelID = createChannel(SimpleServerChannel.NAME, channelProps);
+
+        try {
+            this.truststore = Crypto.getTruststore(props);
+            this.myPublicKey = this.truststore.getCertificate("node1").getPublicKey();
+
+        } catch (KeyStoreException e) {
+            throw new RuntimeException(e);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        } catch (CertificateException e) {
+            throw new RuntimeException(e);
+        }
 
         //Messages
         registerMessageSerializer(channelID, Write.MESSAGE_ID, Write.serializer);
@@ -99,16 +121,94 @@ public class Storage extends GenericProtocol {
     }
 
     private void uponReceiveWriteMessage(Write write, Host host, short sourceProto, int channelID) {
-        System.out.println("RECEBI O WRITE");
-        WriteAcknowledge wAck = new WriteAcknowledge(write.getFilename(), write.getRequestID(), true, this.mySelf);
-        sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
+        System.out.println("[STORAGE] RECEBI WRITE para " + write.getFilename());
+
+        try {
+            String filename = write.getFilename();
+            int version = write.getVersion();  // Assumindo que Write tem getVersion()
+            byte[] encryptedFile = write.getEncryptedFile();
+
+            // 1. Criar diretório filename (se não existir)
+            Path fileDir = Paths.get(mySelf.getPort()+"-storage/" + filename);
+            Files.createDirectories(fileDir);
+            System.out.println("Criada diretório: " + fileDir);
+
+            // 2. Guardar ficheiro como value-<versão>
+            Path valueFile = fileDir.resolve("value-" + version);
+            Files.write(valueFile, encryptedFile);
+
+            System.out.println("Guardado value-" + version +
+                    " (size: " + encryptedFile.length + " bytes)");
+
+            // 3. Responder ACK
+            WriteAcknowledge wAck = new WriteAcknowledge(
+                    write.getFilename(),
+                    write.getRequestID(),
+                    true,
+                    this.mySelf
+            );
+            sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
+
+        } catch (IOException e) {
+            System.err.println("Erro ao processar Write: " + e.getMessage());
+
+            // Responder NACK
+            WriteAcknowledge wAck = new WriteAcknowledge(
+                    write.getFilename(),
+                    write.getRequestID(),
+                    false,
+                    this.mySelf
+            );
+            sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private void uponReceiveWriteMetadata(WriteMetadata writeM, Host host, short sourceProto, int channelID) {
-        System.out.println("RECEBI O WRITEMETADATA");
-        WriteMetadataAcknowledge wMAck = new WriteMetadataAcknowledge(writeM.getFilename(), true, this.mySelf);
-        sendMessage(channelID, wMAck, APP_CLIENT_WRITER, host, 0);
+        System.out.println("[STORAGE] RECEBI WriteMetadata para " + writeM.getFilename());
+
+        try {
+            String filename = writeM.getFilename();
+            int version = writeM.getVersion();
+            byte[] metadataBytes = writeM.getFileBytes();
+
+            // 1. Verificar se diretório existe
+            Path fileDir = Paths.get(mySelf.getPort()+"-storage/" + filename);
+            if (!Files.exists(fileDir)) {
+                System.err.println("Diretório não existe: " + fileDir);
+                // NACK se diretório não existir
+                WriteMetadataAcknowledge nack = new WriteMetadataAcknowledge(
+                        filename, false, mySelf, writeM.getRequestID()
+                );
+                sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
+                return;
+            }
+
+            // 2. Substituir ficheiro metadata (sempre sobrescreve)
+            Path metadataFile = fileDir.resolve("metadata");
+            Files.write(metadataFile, metadataBytes);
+
+            System.out.println("Substituído metadata (size: " + metadataBytes.length + " bytes)");
+            System.out.println("Content preview: " +
+                    new String(metadataBytes, StandardCharsets.UTF_8).substring(0, 50) + "...");
+
+            // 3. Responder ACK
+            WriteMetadataAcknowledge ack = new WriteMetadataAcknowledge(
+                    filename, true, mySelf, writeM.getRequestID()
+            );
+            sendMessage(channelID, ack, APP_CLIENT_WRITER, host, 0);
+
+        } catch (IOException e) {
+            System.err.println("Erro ao processar WriteMetadata: " + e.getMessage());
+
+            WriteMetadataAcknowledge nack = new WriteMetadataAcknowledge(
+                    writeM.getFilename(), false, mySelf, writeM.getRequestID()
+            );
+            sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
+        }
     }
+
 
     private void uponReceiveReadMessage(ProtoMessage protoMessage, Host host, short i, int i1) {
         System.out.println("RECEBI O READ");

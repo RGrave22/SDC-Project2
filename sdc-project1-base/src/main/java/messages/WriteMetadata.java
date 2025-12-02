@@ -1,6 +1,7 @@
 package messages;
 
 import java.io.IOException;
+import java.util.UUID;
 
 import io.netty.buffer.ByteBuf;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedMessageSerializer;
@@ -17,12 +18,28 @@ public class WriteMetadata extends SignedProtoMessage {
 
     private final byte[] digest;
 
+    private UUID requestID;
+
     public WriteMetadata(String filename, int version,byte[] fileBytes, byte[] digest) {
         super(MESSAGE_ID);
         this.filename = filename;
         this.version = version;
         this.fileBytes = fileBytes;
         this.digest = digest;
+        this.requestID = UUID.randomUUID();
+    }
+
+    public WriteMetadata(String filename, int version,byte[] fileBytes, byte[] digest, UUID requestID) {
+        super(MESSAGE_ID);
+        this.filename = filename;
+        this.version = version;
+        this.fileBytes = fileBytes;
+        this.digest = digest;
+        this.requestID = requestID;
+    }
+
+    public UUID getRequestID() {
+        return requestID;
     }
 
     public String getFilename() {
@@ -50,6 +67,10 @@ public class WriteMetadata extends SignedProtoMessage {
             out.writeInt(msg.filename.length());
             out.writeBytes(msg.filename.getBytes());
 
+            //ReqId
+            out.writeLong(msg.requestID.getMostSignificantBits());
+            out.writeLong(msg.requestID.getLeastSignificantBits());
+
             // Versions
             out.writeInt(msg.version);
 
@@ -73,6 +94,9 @@ public class WriteMetadata extends SignedProtoMessage {
             in.readBytes(buffer);
             String filename = new String(buffer);
 
+            // ReqId
+            UUID rID = new UUID(in.readLong(), in.readLong());
+
             // Client ID
             int version = in.readInt();
 
@@ -86,7 +110,7 @@ public class WriteMetadata extends SignedProtoMessage {
             byte[] digest = new byte[len];
             in.readBytes(digest);
 
-            return new WriteMetadata(filename, version, fileBytes, digest);
+            return new WriteMetadata(filename, version, fileBytes, digest, rID);
         }
     };
 

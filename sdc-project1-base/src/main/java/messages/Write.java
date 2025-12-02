@@ -19,27 +19,34 @@ public class Write extends SignedProtoMessage {
     private final String clientID;
     private final byte[] encryptedFile;
     private final String filename;
-
+    private final int version;
     private final UUID requestID;
 
-
-    public Write(String clientID, byte[] encryptedFile, String filename) {
+    /**
+     * Construtor principal
+     */
+    public Write(String clientID, byte[] encryptedFile, String filename, int version) {
         super(MESSAGE_ID);
         this.clientID = clientID;
         this.requestID = UUID.randomUUID();
         this.encryptedFile = encryptedFile;
         this.filename = filename;
+        this.version = version;
     }
 
-    public Write(String clientID, byte[] encryptedFile, String filename, UUID requestID) {
+    /**
+     * Construtor com requestID específico (desserialização)
+     */
+    private Write(String clientID, byte[] encryptedFile, String filename, int version, UUID requestID) {
         super(MESSAGE_ID);
         this.clientID = clientID;
         this.requestID = requestID;
         this.encryptedFile = encryptedFile;
         this.filename = filename;
+        this.version = version;
     }
 
-
+    // Getters
     public byte[] getEncryptedFile() {
         return encryptedFile;
     }
@@ -56,16 +63,19 @@ public class Write extends SignedProtoMessage {
         return requestID;
     }
 
+    public int getVersion() {
+        return version;
+    }
+
     public static final SignedMessageSerializer<Write> serializer = new SignedMessageSerializer<Write>() {
 
         @Override
         public void serializeBody(Write msg, ByteBuf out) throws IOException {
-
             // Client ID
             out.writeInt(msg.clientID.length());
             out.writeBytes(msg.clientID.getBytes());
 
-            // ReqId
+            // Request ID
             out.writeLong(msg.requestID.getMostSignificantBits());
             out.writeLong(msg.requestID.getLeastSignificantBits());
 
@@ -73,24 +83,24 @@ public class Write extends SignedProtoMessage {
             out.writeInt(msg.filename.length());
             out.writeBytes(msg.filename.getBytes());
 
+            // Version
+            out.writeInt(msg.version);
+
             // Encrypted File
             out.writeInt(msg.encryptedFile.length);
             out.writeBytes(msg.encryptedFile);
-
-
         }
 
         @Override
         public Write deserializeBody(ByteBuf in) throws IOException {
-
             // Client ID
             int len = in.readInt();
             byte[] buffer = new byte[len];
             in.readBytes(buffer);
             String clientID = new String(buffer);
 
-            // ReqId
-            UUID rID = new UUID(in.readLong(), in.readLong());
+            // Request ID
+            UUID requestID = new UUID(in.readLong(), in.readLong());
 
             // Filename
             len = in.readInt();
@@ -98,17 +108,26 @@ public class Write extends SignedProtoMessage {
             in.readBytes(buffer);
             String filename = new String(buffer);
 
+            // Version
+            int version = in.readInt();
+
             // Encrypted File
             len = in.readInt();
             byte[] encryptedFile = new byte[len];
             in.readBytes(encryptedFile);
 
-            return new Write(clientID, encryptedFile, filename, rID);
+            return new Write(clientID, encryptedFile, filename, version, requestID);
         }
     };
 
     @Override
     public SignedMessageSerializer<? extends SignedProtoMessage> getSerializer() {
         return Write.serializer;
+    }
+
+    @Override
+    public String toString() {
+        return String.format("Write{client=%s, filename=%s, v=%d, req=%s, size=%d}",
+                clientID, filename, version, requestID, encryptedFile.length);
     }
 }

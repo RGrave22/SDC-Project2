@@ -74,7 +74,7 @@ public class Writer extends GenericProtocol {
 
     private Map<String, Integer> filesVersions;
 
-    private static final int FILE_SIZE = 1024;
+    private static final int FILE_SIZE = 200;
     private static final String UPLOAD_DIR = "uploaded_files";
 
     private int channelID;
@@ -144,9 +144,6 @@ public class Writer extends GenericProtocol {
         for (String s : storageList) {
             String[] e = s.split(":");
             Host candidate = new Host(InetAddress.getByName(e[0]), Short.parseShort(e[1]));
-            // System.out.println("Candidate: " + candidate.toString());
-            // System.out.println("Address: " + candidate.getAddress());
-            // System.out.println("Port: " + candidate.getPort());
             servers.add(candidate);
         }
 
@@ -192,9 +189,6 @@ public class Writer extends GenericProtocol {
         for (int i = 0; i < servers.size(); i++) {
 
             Properties channelProps = new Properties();
-            // System.out.println("Candidate: " + servers.get(i).toString());
-            // System.out.println("Address: " + servers.get(i).getAddress());
-            // System.out.println("Port: " + servers.get(i).getPort());
             channelProps.put(SimpleClientChannel.ADDRESS_KEY, servers.get(i).getAddress().getHostAddress());
             channelProps.put(SimpleClientChannel.PORT_KEY, String.valueOf(servers.get(i).getPort()));
 
@@ -231,8 +225,46 @@ public class Writer extends GenericProtocol {
 
     }
 
+    //Acho que chega isto
     private void uponReceiveMetadataWriteAck(ProtoMessage protoMessage, Host host, short i, int i1) {
         System.out.println("Recebeu Ack final");
+        WriteMetadataAcknowledge writeMetadataAck = (WriteMetadataAcknowledge) protoMessage;
+        List<Host> serversAux = pendingAcks.get(writeMetadataAck.getRequestID());
+        System.out.println("Lista que ainda tenho de metaAck: " + serversAux);
+
+        if (serversAux != null) {
+            serversAux.remove(host);
+
+            int remaining = serversAux.size();
+
+            System.out.println("[WRITER] META ACK from " + host + ", remaining: " + remaining + "/" + servers.size());
+
+            if (remaining <= f) {
+                String filename = writeMetadataAck.getFilename();
+                cleanupMetadataFiles(filename);
+                System.out.println("[WRITER] Quorum of metadata reached! Can proceed");
+                clearTimeout();
+                pendingAcks.remove(writeMetadataAck.getRequestID());
+            }
+
+
+        }
+    }
+
+    private void cleanupMetadataFiles(String filename) {
+        try {
+
+            for (int i = 0; i < servers.size(); i++) {
+                Path metadataPath = Paths.get(UPLOAD_DIR + "-" + myIdentifier, i + "-metadata-" + filename);
+
+                if (Files.exists(metadataPath)) {
+                    Files.delete(metadataPath);
+                }
+            }
+
+        } catch (IOException e) {
+            System.err.println("Error during cleanup: " + e.getMessage());
+        }
     }
 
     private void uponReceiveMetadataReadAck(ProtoMessage protoMessage, Host host, short i, int i1) {
@@ -263,21 +295,23 @@ public class Writer extends GenericProtocol {
                 try {
                     System.out.println("Severs: " + servers);
                     // Para cada servidor, envia o metadata correspondente
+
+                    UUID requestID = UUID.randomUUID();
                     for (int j = 0; j < servers.size(); j++) {
                         Path metadataPath = Paths.get(UPLOAD_DIR + "-" + myIdentifier, j + "-metadata-" + filename);
                         System.out.println("PATH: " + metadataPath);
 
                         if (Files.exists(metadataPath)) {
-                            // 1. LER BYTES
+                            //LER BYTES
                             byte[] metadataBytes = Files.readAllBytes(metadataPath);
 
-                            // 2. CONVERTER PARA STRING
+                            //CONVERTER PARA STRING
                             String metadataContent = new String(metadataBytes, StandardCharsets.UTF_8);
 
-                            // 3. MOSTRAR CONTEÚDO
+                            //MOSTRAR CONTEÚDO
                             System.out.println("FILE: " + metadataPath.getFileName() + ": " + metadataContent);
 
-                            // 4. PARSE (versão|hash|shareIndex|keyShareBase64)
+                            //PARSE (versão|hash|shareIndex|keyShareBase64)
                             String[] parts = metadataContent.split("\\|");
                             if (parts.length == 4) {
                                 int version = Integer.parseInt(parts[0]);
@@ -292,7 +326,7 @@ public class Writer extends GenericProtocol {
 
                                 // 5. ENVIAR PARA SERVIDOR
                                 WriteMetadata metadataMsg = new WriteMetadata(
-                                        filename, version, encryptedMetadata, fileHashDecored
+                                        filename, version, encryptedMetadata, fileHashDecored, requestID
                                 );
 
                                 sendMessage(hostChannels[j], metadataMsg, APP_SERVER_PROTO, servers.get(j), 0);
@@ -301,6 +335,16 @@ public class Writer extends GenericProtocol {
                                         + " | hash=" + fileHash.substring(0, 16) + "..."
                                         + " | share#" + shareIndex
                                         + " | size=" + keyShareB64.length() + "b");
+
+                                if(j==servers.size()-1) {
+                                    System.out.println("[WRITER] creating timer for metadata");
+
+                                    List<Host> servers2 = new ArrayList<>(servers);
+                                    pendingAcks.put(metadataMsg.getRequestID(), servers2);
+                                    this.setIsDoingOp(true);
+                                    this.timeoutTimerID = setupTimer(new ExpiredOperation(metadataMsg.getRequestID(), metadataMsg), operation_timeout);
+                                }
+
                             }
 
                         } else {
@@ -329,6 +373,7 @@ public class Writer extends GenericProtocol {
             cancelTimer(timeoutTimerID);
             this.timeoutTimerID = -1;
         }
+        this.setIsDoingOp(false);
     }
 
     public void uploadFile(String filename) {
@@ -387,7 +432,7 @@ public class Writer extends GenericProtocol {
             Map<Integer, byte[]> keyShares = splitKey(encryptionKey);
 
             //Metadata File
-            Write msg = new Write(myIdentifier, encryptedFile, filename);
+            Write msg = new Write(myIdentifier, encryptedFile, filename, filesVersions.get(filename));
 
             for (int i = 0; i < servers.size(); i++) {
                 Path metadataPath = Paths.get(UPLOAD_DIR + "-" + myIdentifier, i + "-metadata-" + filename);
