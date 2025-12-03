@@ -19,9 +19,9 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import messages.Read;
-import messages.ReadAcknowledge;
+import messages.Metadata;
 import messages.ReadMetadata;
-import messages.ReadMetadataAcknowledge;
+import messages.ReadData;
 import messages.Write;
 import messages.WriteAcknowledge;
 import messages.WriteMetadata;
@@ -102,24 +102,25 @@ public class Storage extends GenericProtocol {
 
         //Messages
         registerMessageSerializer(channelID, Write.MESSAGE_ID, Write.serializer);
-        registerMessageSerializer(channelID, Read.MESSAGE_ID, Read.serializer);
         registerMessageSerializer(channelID, WriteAcknowledge.MESSAGE_ID, WriteAcknowledge.serializer);
-        registerMessageSerializer(channelID, ReadAcknowledge.MESSAGE_ID, ReadAcknowledge.serializer);
         registerMessageSerializer(channelID, WriteMetadata.MESSAGE_ID, WriteMetadata.serializer);
-        //registerMessageSerializer(channelID, ReadAcknowledge.MESSAGE_ID, ReadMetadata.serializer);
         registerMessageSerializer(channelID, WriteMetadataAcknowledge.MESSAGE_ID, WriteMetadataAcknowledge.serializer);
-        // registerMessageSerializer(channelID, ReadAcknowledge.MESSAGE_ID, ReadMetadataAcknowledge.serializer);
-//        registerMessageSerializer(channelID, HelloReplyMessage.MESSAGE_ID, HelloReplyMessage.serializer);
-//        registerMessageSerializer(channelID, ReplyMessage.MESSAGE_ID, ReplyMessage.serializer);
 
+        registerMessageSerializer(channelID, ReadMetadata.MESSAGE_ID, ReadMetadata.serializer);
+        registerMessageSerializer(channelID, Metadata.MESSAGE_ID, Metadata.serializer);
+        registerMessageSerializer(channelID, ReadData.MESSAGE_ID, ReadData.serializer);
+        registerMessageSerializer(channelID, Read.MESSAGE_ID, Read.serializer);
+
+        // Handlers
         registerMessageHandler(channelID, Write.MESSAGE_ID, this::uponReceiveWriteMessage);
-        registerMessageHandler(channelID, Read.MESSAGE_ID, this::uponReceiveReadMessage);
-        registerMessageHandler(channelID, WriteMetadata.MESSAGE_ID, this::uponReceiveWriteMetadata);
-//        registerMessageHandler(channelID, HelloReplyMessage.MESSAGE_ID, this::uponReceiveHelloReplyMessage);
-//        registerMessageHandler(channelID, ReplyMessage.MESSAGE_ID, this::uponReceiveReplyMessage);
+        registerMessageHandler(channelID, WriteMetadata.MESSAGE_ID, this::uponReceiveWriteMetadataMessage);
+
+        registerMessageHandler(channelID, ReadMetadata.MESSAGE_ID, this::uponReceiveReadMetadataMessage);
+        registerMessageHandler(channelID, ReadData.MESSAGE_ID, this::uponReceiveReadDataMessage);
 
     }
 
+    // Write
     private void uponReceiveWriteMessage(Write write, Host host, short sourceProto, int channelID) {
         System.out.println("[STORAGE] RECEBI WRITE para " + write.getFilename());
 
@@ -129,7 +130,7 @@ public class Storage extends GenericProtocol {
             byte[] encryptedFile = write.getEncryptedFile();
 
             // 1. Criar diretório filename (se não existir)
-            Path fileDir = Paths.get(mySelf.getPort()+"-storage/" + filename);
+            Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
             Files.createDirectories(fileDir);
             System.out.println("Criada diretório: " + fileDir);
 
@@ -137,8 +138,8 @@ public class Storage extends GenericProtocol {
             Path valueFile = fileDir.resolve("value-" + version);
             Files.write(valueFile, encryptedFile);
 
-            System.out.println("Guardado value-" + version +
-                    " (size: " + encryptedFile.length + " bytes)");
+            System.out.println("Guardado value-" + version
+                    + " (size: " + encryptedFile.length + " bytes)");
 
             // 3. Responder ACK
             WriteAcknowledge wAck = new WriteAcknowledge(
@@ -165,7 +166,7 @@ public class Storage extends GenericProtocol {
         }
     }
 
-    private void uponReceiveWriteMetadata(WriteMetadata writeM, Host host, short sourceProto, int channelID) {
+    private void uponReceiveWriteMetadataMessage(WriteMetadata writeM, Host host, short sourceProto, int channelID) {
         System.out.println("[STORAGE] RECEBI WriteMetadata para " + writeM.getFilename());
 
         try {
@@ -174,7 +175,7 @@ public class Storage extends GenericProtocol {
             byte[] metadataBytes = writeM.getFileBytes();
 
             // 1. Verificar se diretório existe
-            Path fileDir = Paths.get(mySelf.getPort()+"-storage/" + filename);
+            Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
             if (!Files.exists(fileDir)) {
                 System.err.println("Diretório não existe: " + fileDir);
                 // NACK se diretório não existir
@@ -190,8 +191,8 @@ public class Storage extends GenericProtocol {
             Files.write(metadataFile, metadataBytes);
 
             System.out.println("Substituído metadata (size: " + metadataBytes.length + " bytes)");
-            System.out.println("Content preview: " +
-                    new String(metadataBytes, StandardCharsets.UTF_8).substring(0, 50) + "...");
+            System.out.println("Content preview: "
+                    + new String(metadataBytes, StandardCharsets.UTF_8).substring(0, 50) + "...");
 
             // 3. Responder ACK
             WriteMetadataAcknowledge ack = new WriteMetadataAcknowledge(
@@ -209,9 +210,12 @@ public class Storage extends GenericProtocol {
         }
     }
 
-
-    private void uponReceiveReadMessage(ProtoMessage protoMessage, Host host, short i, int i1) {
+    // Read
+    private void uponReceiveReadMetadataMessage(ReadMetadata readM, Host host, short sourceProto, int channelID) {
         System.out.println("RECEBI O READ");
+    }
+
+    private void uponReceiveReadDataMessage(ReadData read, Host host, short sourceProto, int channelID) {
     }
 
 }

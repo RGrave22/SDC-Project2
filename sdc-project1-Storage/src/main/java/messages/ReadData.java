@@ -1,27 +1,26 @@
 package messages;
 
+import java.io.IOException;
+import java.net.InetAddress;
+
 import io.netty.buffer.ByteBuf;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedMessageSerializer;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedProtoMessage;
 import pt.unl.fct.di.novasys.network.data.Host;
 
-import java.io.IOException;
-import java.net.InetAddress;
-
 /**
- * Reading a File
- * - This acknowledge comes from only a single host that contains the latest version of the requested file
- * (already confirmed by querying the metadatas)
+ * Reading a File - This acknowledge comes from only a single host that contains
+ * the latest version of the requested file (already confirmed by querying the
+ * metadatas)
  *
- * This message brings:
- * - The filename
- * - The encrypted file that is going to be decrypted by the symmetric key already reconstructed by querying the metadatas
- * - a success boolean
- * - the host (cloud) that sent the file
+ * This message brings: - The filename - The encrypted file that is going to be
+ * decrypted by the symmetric key already reconstructed by querying the
+ * metadatas - a success boolean - the host (cloud) that sent the file
  *
  */
-public class ReadAcknowledge extends SignedProtoMessage {
-    public final static short MESSAGE_ID = 712;
+public class ReadData extends SignedProtoMessage {
+
+    public final static short MESSAGE_ID = 714;
 
     private final String filename;
 
@@ -31,7 +30,7 @@ public class ReadAcknowledge extends SignedProtoMessage {
 
     private final Host server;
 
-    public ReadAcknowledge(String filename, byte[] encryptedFile, boolean success, Host server) {
+    public ReadData(String filename, byte[] encryptedFile, boolean success, Host server) {
         super(MESSAGE_ID);
         this.filename = filename;
         this.encryptedFile = encryptedFile;
@@ -39,10 +38,10 @@ public class ReadAcknowledge extends SignedProtoMessage {
         this.server = server;
     }
 
-    public static final SignedMessageSerializer<ReadAcknowledge> serializer = new SignedMessageSerializer<ReadAcknowledge>() {
+    public static final SignedMessageSerializer<ReadData> serializer = new SignedMessageSerializer<ReadData>() {
 
         @Override
-        public void serializeBody(ReadAcknowledge msg, ByteBuf out) throws IOException {
+        public void serializeBody(ReadData msg, ByteBuf out) throws IOException {
 
             // Filename
             out.writeInt(msg.filename.length());
@@ -66,7 +65,7 @@ public class ReadAcknowledge extends SignedProtoMessage {
         }
 
         @Override
-        public ReadAcknowledge deserializeBody(ByteBuf in) throws IOException {
+        public ReadData deserializeBody(ByteBuf in) throws IOException {
 
             // Filename
             int len = in.readInt();
@@ -93,12 +92,12 @@ public class ReadAcknowledge extends SignedProtoMessage {
 
             Host server = new Host(address, port);
 
-            return new ReadAcknowledge(filename, encryptedFile, success, server);
+            return new ReadData(filename, encryptedFile, success, server);
         }
     };
 
     @Override
     public SignedMessageSerializer<? extends SignedProtoMessage> getSerializer() {
-        return ReadAcknowledge.serializer;
+        return ReadData.serializer;
     }
 }
