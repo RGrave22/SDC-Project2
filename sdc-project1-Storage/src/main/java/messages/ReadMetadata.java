@@ -1,104 +1,60 @@
 package messages;
 
 import java.io.IOException;
-import java.net.InetAddress;
+import java.util.UUID;
 
 import io.netty.buffer.ByteBuf;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedMessageSerializer;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedProtoMessage;
-import pt.unl.fct.di.novasys.network.data.Host;
 
-/**
- * Reading a File
- * - This acknowledge comes from only a single host that contains the latest version of the requested file
- * (already confirmed by querying the metadatas)
- *
- * This message brings:
- * - The filename
- * - The encrypted file that is going to be decrypted by the symmetric key already reconstructed by querying the metadatas
- * - a success boolean
- * - the host (cloud) that sent the file
- *
- */
 public class ReadMetadata extends SignedProtoMessage {
-    public final static short MESSAGE_ID = 713;
+
+    public static final short MESSAGE_ID = 713;
 
     private final String filename;
+    private final UUID requestID;
 
-    private final byte[] encryptedFile;
-
-    private final boolean success;
-
-    private final Host server;
-
-    public ReadMetadata(String filename, byte[] encryptedFile, boolean success, Host server) {
+    public ReadMetadata(String filename, UUID requestID) {
         super(MESSAGE_ID);
         this.filename = filename;
-        this.encryptedFile = encryptedFile;
-        this.success = success;
-        this.server = server;
+        this.requestID = requestID;
     }
 
-    public static final SignedMessageSerializer<ReadMetadata> serializer = new SignedMessageSerializer<ReadMetadata>() {
+    public String getFilename() { return filename; }
+    public UUID getRequestID() { return requestID; }
 
-        @Override
-        public void serializeBody(ReadMetadata msg, ByteBuf out) throws IOException {
+    public static final SignedMessageSerializer<ReadMetadata> serializer =
+            new SignedMessageSerializer<ReadMetadata>() {
 
-            // Filename
-            out.writeInt(msg.filename.length());
-            out.writeBytes(msg.filename.getBytes());
+                @Override
+                public void serializeBody(ReadMetadata msg, ByteBuf out) throws IOException {
 
-            // Encrypted File
-            out.writeInt(msg.encryptedFile.length);
-            out.writeBytes(msg.encryptedFile);
+                    byte[] f = msg.filename.getBytes();
+                    out.writeInt(f.length);
+                    out.writeBytes(f);
 
-            // Success
-            out.writeBoolean(msg.success);
+                    out.writeLong(msg.requestID.getMostSignificantBits());
+                    out.writeLong(msg.requestID.getLeastSignificantBits());
+                }
 
-            // Host (server)
-            byte[] addressBytes = msg.server.getAddress().getAddress();
-            out.writeInt(addressBytes.length);
-            out.writeBytes(addressBytes);
+                @Override
+                public ReadMetadata deserializeBody(ByteBuf in) throws IOException {
 
-            // Serializa a porta
-            out.writeShort(msg.server.getPort());
+                    int len = in.readInt();
+                    byte[] buff = new byte[len];
+                    in.readBytes(buff);
+                    String filename = new String(buff);
 
-        }
+                    long msb = in.readLong();
+                    long lsb = in.readLong();
+                    UUID req = new UUID(msb, lsb);
 
-        @Override
-        public ReadMetadata deserializeBody(ByteBuf in) throws IOException {
-
-            // Filename
-            int len = in.readInt();
-            byte[] buffer = new byte[len];
-            in.readBytes(buffer);
-            String filename = new String(buffer);
-
-            // Encrypted File
-            len = in.readInt();
-            byte[] encryptedFile = new byte[len];
-            in.readBytes(encryptedFile);
-
-            // Success
-            boolean success = in.readBoolean();
-
-            // Host (server)
-            len = in.readInt();
-            byte[] addressBytes = new byte[len];
-            in.readBytes(addressBytes);
-            InetAddress address = InetAddress.getByAddress(addressBytes);
-
-            // Desserializa a porta
-            short port = in.readShort();
-
-            Host server = new Host(address, port);
-
-            return new ReadMetadata(filename, encryptedFile, success, server);
-        }
-    };
+                    return new ReadMetadata(filename, req);
+                }
+            };
 
     @Override
     public SignedMessageSerializer<? extends SignedProtoMessage> getSerializer() {
-        return ReadMetadata.serializer;
+        return serializer;
     }
 }

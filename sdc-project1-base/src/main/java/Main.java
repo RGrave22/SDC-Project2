@@ -1,3 +1,4 @@
+
 import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.InetAddress;
@@ -7,42 +8,37 @@ import java.security.GeneralSecurityException;
 import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.Properties;
+import java.util.Scanner;
 
-import Reader.Reader;
 import Writer.Writer;
-import app.DistributedLogManager;
-import broadcast.CrashFaultReliableBroadcastProtocol;
-import membership.staticmembership.StaticMembershipProtocol;
 import pt.unl.fct.di.novasys.babel.core.Babel;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
 import pt.unl.fct.di.novasys.babel.exceptions.InvalidParameterException;
 import pt.unl.fct.di.novasys.babel.exceptions.ProtocolAlreadyExistsException;
-import replication.ReplicationProtocolPlaceholder;
 
 public class Main {
 
-	// Sets the log4j (logging library) configuration file and forces IPV4
-	static {
-		System.setProperty("log4j.configurationFile", "log4j2.xml");
-		System.setProperty("java.net.preferIPv4Stack" , "true");
-	}
-	
-	public static final String ADDRESS_KEY = "address";
+    // Sets the log4j (logging library) configuration file and forces IPV4
+    static {
+        System.setProperty("log4j.configurationFile", "log4j2.xml");
+        System.setProperty("java.net.preferIPv4Stack", "true");
+    }
+
+    public static final String ADDRESS_KEY = "address";
 
     public static final String WRITER = "writer";
     public static final String MYSELF = "membership.myhost";
 
+    public static final void main(String[] args) throws IOException, InvalidParameterException, ProtocolAlreadyExistsException, HandlerRegistrationException, GeneralSecurityException {
+        Properties props = Babel.loadConfig(Arrays.copyOfRange(args, 0, args.length), "babel-conf.txt");
 
-
-	public static final void main(String[] args) throws IOException, InvalidParameterException, ProtocolAlreadyExistsException, HandlerRegistrationException, GeneralSecurityException {
-		Properties props = Babel.loadConfig(Arrays.copyOfRange(args, 0, args.length), "babel-conf.txt");
-
-		if (props.containsKey("interface")) {
-			String address = Main.getAddress(props.getProperty("interface"));
-			if (address == null)
-				return;
-			props.put(ADDRESS_KEY, address);
-		}
+        if (props.containsKey("interface")) {
+            String address = Main.getAddress(props.getProperty("interface"));
+            if (address == null) {
+                return;
+            }
+            props.put(ADDRESS_KEY, address);
+        }
 
         String writer = props.getProperty(WRITER);
         String mySelf = props.getProperty(MYSELF);
@@ -50,18 +46,24 @@ public class Main {
         Babel babel = Babel.getInstance();
 
 //        if(mySelf.equals(writer)){
-
         Writer w = new Writer();
         babel.registerProtocol(w);
         w.init(props);
         babel.start();
         System.err.println("Babel has started...");
 
-        java.util.Scanner scanner = new java.util.Scanner(System.in);
+        Scanner scanner = new java.util.Scanner(System.in);
 
         while (true) {
 
-            if(!w.getIdDoingOp()) {
+            while (w.getIdDoingOp()) {
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                }
+            }
+
+            if (!w.getIdDoingOp()) {
                 System.out.print("> ");
                 String input = scanner.nextLine().trim();
                 String[] cmd = input.split("\\s+", 2);
@@ -99,46 +101,34 @@ public class Main {
 //            babel.start();
 //            System.err.println("Babel has started...");
 //        }
-
-
 //		DistributedLogManager dlm = new DistributedLogManager();
 //		ReplicationProtocolPlaceholder rep = new ReplicationProtocolPlaceholder();
 //		CrashFaultReliableBroadcastProtocol bcast = new CrashFaultReliableBroadcastProtocol();
-		
-		//To simplify lets use this protocol again
+        //To simplify lets use this protocol again
 //		StaticMembershipProtocol smp = new StaticMembershipProtocol();
-		
 //		babel.registerProtocol(dlm);
 //		babel.registerProtocol(rep);
 //		babel.registerProtocol(bcast);
-		
 //		babel.registerProtocol(smp);
-
 //		dlm.init(props);
 //		rep.init(props);
 //		bcast.init(props);
-
 //		smp.init(props);
-
-
-
-	}
-
-
-
+    }
 
     private static String getAddress(String inter) throws SocketException {
         NetworkInterface byName = NetworkInterface.getByName(inter);
         if (byName == null) {
-        	System.err.println("No interface named " + inter);
+            System.err.println("No interface named " + inter);
             return null;
         }
         Enumeration<InetAddress> addresses = byName.getInetAddresses();
         InetAddress currentAddress;
         while (addresses.hasMoreElements()) {
             currentAddress = addresses.nextElement();
-            if (currentAddress instanceof Inet4Address)
+            if (currentAddress instanceof Inet4Address) {
                 return currentAddress.getHostAddress();
+            }
         }
         System.err.println("No ipv4 found for interface " + inter);
         return null;

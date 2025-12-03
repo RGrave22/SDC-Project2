@@ -8,10 +8,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.*;
 import java.security.cert.CertificateException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -28,12 +26,9 @@ import messages.WriteMetadata;
 import messages.WriteMetadataAcknowledge;
 import pt.unl.fct.di.novasys.babel.core.GenericProtocol;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
-import pt.unl.fct.di.novasys.babel.generic.ProtoMessage;
 import pt.unl.fct.di.novasys.channel.simpleclientserver.SimpleServerChannel;
 import pt.unl.fct.di.novasys.network.data.Host;
 import utils.Crypto;
-
-import javax.crypto.Cipher;
 
 public class Storage extends GenericProtocol {
 
@@ -116,7 +111,7 @@ public class Storage extends GenericProtocol {
         registerMessageHandler(channelID, WriteMetadata.MESSAGE_ID, this::uponReceiveWriteMetadataMessage);
 
         registerMessageHandler(channelID, ReadMetadata.MESSAGE_ID, this::uponReceiveReadMetadataMessage);
-        registerMessageHandler(channelID, ReadData.MESSAGE_ID, this::uponReceiveReadDataMessage);
+        registerMessageHandler(channelID, Read.MESSAGE_ID, this::uponReceiveReadMessage);
 
     }
 
@@ -126,7 +121,7 @@ public class Storage extends GenericProtocol {
 
         try {
             String filename = write.getFilename();
-            int version = write.getVersion();  // Assumindo que Write tem getVersion()
+            int version = write.getVersion();
             byte[] encryptedFile = write.getEncryptedFile();
 
             // 1. Criar diretório filename (se não existir)
@@ -186,7 +181,7 @@ public class Storage extends GenericProtocol {
                 return;
             }
 
-            // 2. Substituir ficheiro metadata (sempre sobrescreve)
+            // 2. Substituir ficheiro metadata (sobrescreve)
             Path metadataFile = fileDir.resolve("metadata");
             Files.write(metadataFile, metadataBytes);
 
@@ -212,10 +207,75 @@ public class Storage extends GenericProtocol {
 
     // Read
     private void uponReceiveReadMetadataMessage(ReadMetadata readM, Host host, short sourceProto, int channelID) {
-        System.out.println("RECEBI O READ");
+        System.out.println("[STORAGE] Received ReadMetadata for file: " + readM.getFilename());
+        try {
+            String filename = readM.getFilename();
+            Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
+
+            if (!Files.exists(fileDir)) {
+                System.err.println("[STORAGE] File directory does not exist: " + fileDir);
+                return;
+            }
+
+            Path metadataFile = fileDir.resolve("metadata");
+            if (!Files.exists(metadataFile)) {
+                System.err.println("[STORAGE] Metadata file not found for " + filename);
+                return;
+            }
+
+            byte[] metadataBytes = Files.readAllBytes(metadataFile);
+            String[] parts = new String(metadataBytes, StandardCharsets.UTF_8).split("\\|");
+            if (parts.length != 4) {
+                System.err.println("[STORAGE] Metadata format invalid for " + filename);
+                return;
+            }
+
+            int version = Integer.parseInt(parts[0]);
+            String fileHash = parts[1];
+            int shareIndex = Integer.parseInt(parts[2]);
+            byte[] keyShare = java.util.Base64.getDecoder().decode(parts[3]);
+
+            Metadata metaMsg = new Metadata(
+                    readM.getFilename(),
+                    version,
+                    fileHash,
+                    shareIndex,
+                    keyShare,
+                    readM.getRequestID()
+            );
+
+            sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
+            System.out.println("[STORAGE] Sent Metadata for " + filename + " to " + host);
+
+        } catch (IOException e) {
+            System.err.println("[STORAGE] Error reading metadata: " + e.getMessage());
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    private void uponReceiveReadDataMessage(ReadData read, Host host, short sourceProto, int channelID) {
+    private void uponReceiveReadMessage(Read read, Host host, short sourceProto, int channelID) {
+        System.out.println("[STORAGE] Received Read (data request) for file: " + read.getFilename());
+        try {
+            String filename = read.getFilename();
+            int requestedVersion = read.getVersion();
+            Path valueFile = Paths.get(mySelf.getPort() + "-storage/" + filename, "value-" + requestedVersion);
+
+            if (!Files.exists(valueFile)) {
+                System.err.println("[STORAGE] Value file does not exist: " + valueFile);
+                return;
+            }
+
+            byte[] encryptedFile = Files.readAllBytes(valueFile);
+            ReadData dataMsg = new ReadData(filename, requestedVersion, encryptedFile, read.getRequestID());
+            sendMessage(channelID, dataMsg, APP_CLIENT_WRITER, host, 0);
+            
+            System.out.println("[STORAGE] Sent ReadData for " + filename + " to " + host);
+        } catch (IOException e) {
+            System.err.println("[STORAGE] Error reading file: " + e.getMessage());
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
 }

@@ -6,7 +6,6 @@ import broadcast.requests.BroadcastRequest;
 import common.events.ChannelAvailable;
 import common.events.NeighborDown;
 import common.events.NeighborUp;
-import messages.ReadAcknowledge;
 import messages.Write;
 import messages.WriteAcknowledge;
 
@@ -146,11 +145,9 @@ public class Reader extends GenericProtocol {
 
             //Messages
             registerMessageSerializer(hostChannels[i], WriteAcknowledge.MESSAGE_ID, WriteAcknowledge.serializer);
-            registerMessageSerializer(hostChannels[i], ReadAcknowledge.MESSAGE_ID, ReadAcknowledge.serializer);
             registerMessageSerializer(hostChannels[i], Write.MESSAGE_ID, Write.serializer);
 
             registerMessageHandler(hostChannels[i], WriteAcknowledge.MESSAGE_ID, this::uponReceiveWriteAck);
-            registerMessageHandler(hostChannels[i], ReadAcknowledge.MESSAGE_ID, this::uponReceiveReadAck);
 
             openConnection(servers.get(i), hostChannels[i]);
             System.out.println("[WRITER] Estamos a abrir um canal entre: " + servers.get(i).toString() + ": " + channelID);
