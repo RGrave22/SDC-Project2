@@ -255,8 +255,7 @@ public class Storage extends GenericProtocol {
     }
 
     private void uponReceiveWriteMetadataMessage(WriteMetadata writeM, Host host, short sourceProto, int channelID) {
-        System.out
-                .println("[STORAGE] RECEBI WriteMetadata para " + writeM.getFilename() + "do Host: " + host.toString());
+        System.out.println("[STORAGE] RECEBI WriteMetadata para " + writeM.getFilename() + "do Host: " + host.toString());
 
         try {
 
@@ -344,7 +343,7 @@ public class Storage extends GenericProtocol {
 
             byte[] metadataBytes = Files.readAllBytes(metadataFile);
             String[] parts = new String(metadataBytes, StandardCharsets.UTF_8).split("\\|");
-            if (parts.length != 4) {
+            if (parts.length != 6) {
                 System.err.println("[STORAGE] Metadata format invalid for " + filename);
                 return;
             }

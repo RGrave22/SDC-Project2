@@ -675,6 +675,7 @@ public class Writer extends GenericProtocol {
             Map<Integer, byte[]> shares = new HashMap<>();
             for (Metadata m : pr.metadataResponses.values()) {
                 if (m.getVersion() == pr.selectedVersion) {
+//                    System.out.println("Share index: " + m.getShareIndex());
                     shares.put(m.getShareIndex(), m.getKeyShare());
                 }
             }
