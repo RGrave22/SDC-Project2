@@ -48,7 +48,6 @@ public class Storage extends GenericProtocol {
 
     public final static String NEIGHBORS = "membership.neighbors";
 
-
     private HashSet<UUID> delivered;
     private List<Host> neighbors;
     private HashMap<Host, PublicKey> publicKeys;
@@ -60,6 +59,8 @@ public class Storage extends GenericProtocol {
     private int channelID;
 
     private KeyStore truststore;
+
+    private Map<String, Host> filesAuthors;
 
     private final Logger logger = LogManager.getLogger(Storage.class);
 
@@ -74,6 +75,7 @@ public class Storage extends GenericProtocol {
         this.myPublicKey = null;
         this.myPrivateKey = null;
         this.truststore = null;
+        this.filesAuthors = new HashMap<>();
     }
 
     @Override
@@ -115,7 +117,7 @@ public class Storage extends GenericProtocol {
             throw new RuntimeException(e);
         }
 
-        //Messages
+        // Messages
         registerMessageSerializer(channelID, Write.MESSAGE_ID, Write.serializer);
         registerMessageSerializer(channelID, WriteAcknowledge.MESSAGE_ID, WriteAcknowledge.serializer);
         registerMessageSerializer(channelID, WriteMetadata.MESSAGE_ID, WriteMetadata.serializer);
@@ -150,14 +152,13 @@ public class Storage extends GenericProtocol {
 
         try {
 
-            if(!write.checkSignature(publicKeys.get(host))){
+            if (!write.checkSignature(publicKeys.get(host))) {
                 logger.error("[STORAGE] ERROR CHECKING PUBLIC KEY");
                 WriteAcknowledge wAck = new WriteAcknowledge(
                         write.getFilename(),
                         write.getRequestID(),
                         false,
-                        this.mySelf
-                );
+                        this.mySelf);
                 sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
                 return;
             }
@@ -166,6 +167,13 @@ public class Storage extends GenericProtocol {
             String filename = write.getFilename();
             int version = write.getVersion();
             byte[] encryptedFile = write.getEncryptedFile();
+
+            Host h = filesAuthors.get(filename);
+
+            if (h != null && h.getPort() != host.getPort()) {
+                System.out.println("Upload realizado pelo cliente errado.");
+                return;
+            }
 
             // 1. Criar diretório filename (se não existir)
             Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
@@ -182,8 +190,7 @@ public class Storage extends GenericProtocol {
                         write.getFilename(),
                         write.getRequestID(),
                         false,
-                        this.mySelf
-                );
+                        this.mySelf);
                 sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
                 return;
             }
@@ -200,11 +207,12 @@ public class Storage extends GenericProtocol {
                     write.getFilename(),
                     write.getRequestID(),
                     true,
-                    this.mySelf
-            );
+                    this.mySelf);
             System.out.println("ESTA È A PUTA: " + wAck.getRequestID());
             sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
             System.out.println("FODASE");
+
+            filesAuthors.put(filename, host);
 
         } catch (IOException e) {
             System.err.println("Erro ao processar Write: " + e.getMessage());
@@ -214,8 +222,7 @@ public class Storage extends GenericProtocol {
                     write.getFilename(),
                     write.getRequestID(),
                     false,
-                    this.mySelf
-            );
+                    this.mySelf);
             sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
         } catch (Exception e) {
             System.out.println("DEU MERDA: " + e.getMessage());
@@ -248,20 +255,18 @@ public class Storage extends GenericProtocol {
     }
 
     private void uponReceiveWriteMetadataMessage(WriteMetadata writeM, Host host, short sourceProto, int channelID) {
-        System.out.println("[STORAGE] RECEBI WriteMetadata para " + writeM.getFilename() + "do Host: " + host.toString());
-
-
+        System.out
+                .println("[STORAGE] RECEBI WriteMetadata para " + writeM.getFilename() + "do Host: " + host.toString());
 
         try {
 
-            if(!writeM.checkSignature(publicKeys.get(host))){
+            if (!writeM.checkSignature(publicKeys.get(host))) {
                 logger.error("[STORAGE] ERROR CHECKING PUBLIC KEY");
                 WriteMetadataAcknowledge wAck = new WriteMetadataAcknowledge(
                         writeM.getFilename(),
                         false,
                         this.mySelf,
-                        writeM.getRequestID()
-                );
+                        writeM.getRequestID());
                 sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
                 return;
             }
@@ -270,19 +275,16 @@ public class Storage extends GenericProtocol {
             int version = writeM.getVersion();
             byte[] metadataBytes = writeM.getFileBytes();
 
-
             // 1. Verificar se diretório existe
             Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
             if (!Files.exists(fileDir)) {
                 System.err.println("Diretório não existe: " + fileDir);
                 // NACK se diretório não existir
                 WriteMetadataAcknowledge nack = new WriteMetadataAcknowledge(
-                        filename, false, mySelf, writeM.getRequestID()
-                );
+                        filename, false, mySelf, writeM.getRequestID());
                 sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
                 return;
             }
-
 
             // 2. Substituir ficheiro metadata (sobrescreve)
             Path metadataFile = fileDir.resolve("metadata");
@@ -294,16 +296,14 @@ public class Storage extends GenericProtocol {
 
             // 3. Responder ACK
             WriteMetadataAcknowledge ack = new WriteMetadataAcknowledge(
-                    filename, true, mySelf, writeM.getRequestID()
-            );
+                    filename, true, mySelf, writeM.getRequestID());
             sendMessage(channelID, ack, APP_CLIENT_WRITER, host, 0);
 
         } catch (IOException e) {
             System.err.println("Erro ao processar WriteMetadata: " + e.getMessage());
 
             WriteMetadataAcknowledge nack = new WriteMetadataAcknowledge(
-                    writeM.getFilename(), false, mySelf, writeM.getRequestID()
-            );
+                    writeM.getFilename(), false, mySelf, writeM.getRequestID());
             sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
@@ -323,7 +323,7 @@ public class Storage extends GenericProtocol {
         System.out.println("[STORAGE] Received ReadMetadata for file: " + readM.getFilename());
         try {
 
-            if(!readM.checkSignature(publicKeys.get(host))){
+            if (!readM.checkSignature(publicKeys.get(host))) {
                 logger.error("[STORAGE] ERROR CHECKING PUBLIC KEY");
                 return;
             }
@@ -349,10 +349,12 @@ public class Storage extends GenericProtocol {
                 return;
             }
 
-            int version = Integer.parseInt(parts[0]);
-            String fileHash = parts[1];
-            int shareIndex = Integer.parseInt(parts[2]);
-            byte[] keyShare = java.util.Base64.getDecoder().decode(parts[3]);
+            String identifier = parts[0];
+            byte[] sign = Base64.getDecoder().decode(parts[1]);
+            int version = Integer.parseInt(parts[2]);
+            String fileHash = parts[3];
+            int shareIndex = Integer.parseInt(parts[4]);
+            byte[] keyShare = Base64.getDecoder().decode(parts[5]);
 
             Metadata metaMsg = new Metadata(
                     readM.getFilename(),
@@ -360,8 +362,9 @@ public class Storage extends GenericProtocol {
                     fileHash,
                     shareIndex,
                     keyShare,
-                    readM.getRequestID()
-            );
+                    readM.getRequestID(),
+                    identifier,
+                    sign);
 
             sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
             System.out.println("[STORAGE] Sent Metadata for " + filename + " to " + host);
@@ -377,7 +380,7 @@ public class Storage extends GenericProtocol {
         System.out.println("[STORAGE] Received Read (data request) for file: " + read.getFilename());
         try {
 
-            if(!read.checkSignature(publicKeys.get(host))){
+            if (!read.checkSignature(publicKeys.get(host))) {
                 logger.error("[STORAGE] ERROR CHECKING PUBLIC KEY");
                 return;
             }
@@ -394,7 +397,7 @@ public class Storage extends GenericProtocol {
             byte[] encryptedFile = Files.readAllBytes(valueFile);
             ReadData dataMsg = new ReadData(filename, requestedVersion, encryptedFile, read.getRequestID());
             sendMessage(channelID, dataMsg, APP_CLIENT_WRITER, host, 0);
-            
+
             System.out.println("[STORAGE] Sent ReadData for " + filename + " to " + host);
         } catch (IOException e) {
             System.err.println("[STORAGE] Error reading file: " + e.getMessage());

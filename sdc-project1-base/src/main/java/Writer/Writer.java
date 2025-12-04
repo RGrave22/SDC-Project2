@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.Base64;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -77,13 +78,13 @@ public class Writer extends GenericProtocol {
 
     private final Logger logger = LogManager.getLogger(Writer.class);
 
-    //Shamir
+    // Shamir
     private Scheme scheme;
     private int f;
     private int threshold;
     private List<Host> servers;
 
-    //timer
+    // timer
     private long operation_timeout;
     private long timeoutTimerID;
     public final static String OPERATION_TIMEOUT = "operation_timeout";
@@ -129,12 +130,12 @@ public class Writer extends GenericProtocol {
         this.servers = new ArrayList<>();
         this.pendingReads = new HashMap<>();
 
-        //TRATAR DA PARTE DOS SERVERS
+        // TRATAR DA PARTE DOS SERVERS
         this.f = 0;
         this.threshold = f + 1;
         this.scheme = null;
 
-        //timer
+        // timer
         this.timeoutTimerID = -1;
         this.operation_timeout = -1;
 
@@ -176,7 +177,7 @@ public class Writer extends GenericProtocol {
                 System.out.println("Host: " + neighbors.get(i).toString() + " with key of: " + nodes[i]);
             }
 
-            //PARA VERIFICAR SE A KEY ESTA CERTA
+            // PARA VERIFICAR SE A KEY ESTA CERTA
             java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(myPublicKey.getEncoded());
             StringBuilder hex = new StringBuilder();
@@ -210,11 +211,12 @@ public class Writer extends GenericProtocol {
 
             hostChannels[i] = createChannel(SimpleClientChannel.NAME, channelProps);
 
-            //Messages
+            // Messages
             registerMessageSerializer(hostChannels[i], Write.MESSAGE_ID, Write.serializer);
             registerMessageSerializer(hostChannels[i], WriteAcknowledge.MESSAGE_ID, WriteAcknowledge.serializer);
             registerMessageSerializer(hostChannels[i], WriteMetadata.MESSAGE_ID, WriteMetadata.serializer);
-            registerMessageSerializer(hostChannels[i], WriteMetadataAcknowledge.MESSAGE_ID, WriteMetadataAcknowledge.serializer);
+            registerMessageSerializer(hostChannels[i], WriteMetadataAcknowledge.MESSAGE_ID,
+                    WriteMetadataAcknowledge.serializer);
 
             registerMessageSerializer(hostChannels[i], ReadMetadata.MESSAGE_ID, ReadMetadata.serializer);
             registerMessageSerializer(hostChannels[i], Metadata.MESSAGE_ID, Metadata.serializer);
@@ -225,21 +227,22 @@ public class Writer extends GenericProtocol {
 
             // Handlers
             registerMessageHandler(hostChannels[i], WriteAcknowledge.MESSAGE_ID, this::uponReceiveWriteAck);
-            registerMessageHandler(hostChannels[i], WriteMetadataAcknowledge.MESSAGE_ID, this::uponReceiveMetadataWriteAck);
+            registerMessageHandler(hostChannels[i], WriteMetadataAcknowledge.MESSAGE_ID,
+                    this::uponReceiveMetadataWriteAck);
 
             registerMessageHandler(hostChannels[i], Metadata.MESSAGE_ID, this::uponReceiveMetadata);
             registerMessageHandler(hostChannels[i], ReadData.MESSAGE_ID, this::uponReceiveReadData);
 
             registerChannelEventHandler(hostChannels[i], ServerUpEvent.EVENT_ID, this::uponServerUp);
 
-
             openConnection(servers.get(i), hostChannels[i]);
-            System.out.println("[WRITER] Estamos a abrir um canal entre: " + servers.get(i).toString() + ": " + channelID);
+            System.out.println(
+                    "[WRITER] Estamos a abrir um canal entre: " + servers.get(i).toString() + ": " + channelID);
 
         }
 
         registerTimerHandler(ExpiredOperation.TIMER_ID, this::handleExpiredTimer);
-        //sendHelloMessages();
+        // sendHelloMessages();
     }
 
     private void uponOutConnectionFailed(ChannelEvent channelEvent, int i) {
@@ -297,7 +300,7 @@ public class Writer extends GenericProtocol {
                 int currentVersion = filesVersions.get(filename);
                 int newVersion = currentVersion + 1;
 
-                //Fiz isto para fazer com que o ficheiro mude sempre que mandamos outra versão
+                // Fiz isto para fazer com que o ficheiro mude sempre que mandamos outra versão
                 byte[] data = new byte[FILE_SIZE];
                 new java.util.Random().nextBytes(data);
 
@@ -310,12 +313,12 @@ public class Writer extends GenericProtocol {
 
             byte[] fileBytes = Files.readAllBytes(path);
 
-            //cria uma simetric key
+            // cria uma simetric key
             KeyGenerator keyGen = KeyGenerator.getInstance("AES");
             keyGen.init(256);
             SecretKey encryptionKey = keyGen.generateKey();
 
-            //encripta o ficheiro
+            // encripta o ficheiro
             Cipher cipher = Cipher.getInstance("AES");
             cipher.init(Cipher.ENCRYPT_MODE, encryptionKey);
             byte[] encryptedFile = cipher.doFinal(fileBytes);
@@ -323,7 +326,7 @@ public class Writer extends GenericProtocol {
             String fileHash = calculateSHA256(fileBytes);
             System.out.println("[WRITER] File hash: " + fileHash.substring(0, 16) + "...");
 
-            //Parte a chave
+            // Parte a chave
             Map<Integer, byte[]> keyShares = splitKey(encryptionKey);
 
             Write msg = new Write(myIdentifier, encryptedFile, filename, filesVersions.get(filename));
@@ -332,11 +335,18 @@ public class Writer extends GenericProtocol {
 
             msg.signMessage(myPrivateKey);
 
-            //Metadata File
+            byte[] signAux = SignaturesHelper.generateSignature(this.myIdentifier.getBytes(StandardCharsets.UTF_8),
+                    myPrivateKey);
+
+            String sign = Base64.getEncoder().encodeToString(signAux);
+
+            // Metadata File
             for (int i = 0; i < servers.size(); i++) {
                 Path metadataPath = Paths.get(UPLOAD_DIR + "-" + myIdentifier, i + "-metadata-" + filename);
 
                 StringBuilder metadataContent = new StringBuilder();
+                metadataContent.append(this.myIdentifier).append("|");
+                metadataContent.append(sign).append("|");
                 metadataContent.append(filesVersions.get(filename)).append("|");
                 metadataContent.append(fileHash).append("|");
                 metadataContent.append(i + 1).append("|");
@@ -347,7 +357,8 @@ public class Writer extends GenericProtocol {
 
                 Files.write(metadataPath, metadataContent.toString().getBytes());
                 System.out.println("[WRITER] Metadata created: " + metadataPath);
-                System.out.println("[WRITER] Metadata content: " + metadataContent.toString().substring(0, 100) + "...");
+                System.out
+                        .println("[WRITER] Metadata content: " + metadataContent.toString().substring(0, 100) + "...");
 
                 sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
                 System.out.println("Mensagem enviada para: " + servers.get(i).toString());
@@ -367,7 +378,7 @@ public class Writer extends GenericProtocol {
         }
     }
 
-    public void downloadFile(String filename)  {
+    public void downloadFile(String filename) {
         if (filename == null || filename.isEmpty()) {
             System.out.println("Usage: DOWNLOAD <filename> <outputName>");
             return;
@@ -468,30 +479,31 @@ public class Writer extends GenericProtocol {
                     System.out.println("PATH: " + metadataPath);
 
                     if (Files.exists(metadataPath)) {
-                        //LER BYTES
+                        // LER BYTES
                         byte[] metadataBytes = Files.readAllBytes(metadataPath);
 
-                        //CONVERTER PARA STRING
+                        // CONVERTER PARA STRING
                         String metadataContent = new String(metadataBytes, StandardCharsets.UTF_8);
 
-                        //MOSTRAR CONTEÚDO
+                        // MOSTRAR CONTEÚDO
                         System.out.println("FILE: " + metadataPath.getFileName() + ": " + metadataContent);
 
-                        //PARSE (versão|hash|shareIndex|keyShareBase64)
+                        // PARSE (versão|hash|shareIndex|keyShareBase64)
                         String[] parts = metadataContent.split("\\|");
-                        if (parts.length == 4) {
-                            int version = Integer.parseInt(parts[0]);
-                            String fileHash = parts[1];
+                        if (parts.length == 6) {
+                            String identifier = parts[0];
+                            byte[] sign = Base64.getDecoder().decode(parts[1]);
+                            int version = Integer.parseInt(parts[2]);
+                            String fileHash = parts[3];
                             byte[] fileHashDecored = java.util.Base64.getDecoder().decode(fileHash);
-                            int shareIndex = Integer.parseInt(parts[2]);
-                            String keyShareB64 = parts[3];
+                            int shareIndex = Integer.parseInt(parts[4]);
+                            String keyShareB64 = parts[5];
 
-                            //Encrypt metadata
+                            // Encrypt metadata
 
                             // 5. ENVIAR PARA SERVIDOR
                             WriteMetadata metadataMsg = new WriteMetadata(
-                                    filename, version, metadataBytes, fileHashDecored, metadataRequestID
-                            );
+                                    filename, version, metadataBytes, fileHashDecored, metadataRequestID);
                             metadataMsg.signMessage(myPrivateKey);
                             sendMessage(hostChannels[j], metadataMsg, APP_SERVER_PROTO, servers.get(j), 0);
 
@@ -511,7 +523,8 @@ public class Writer extends GenericProtocol {
 
                 // Setup timer para a fase METADATA
                 clearTimeout();
-                // Nota: aqui não temos a mensagem concreta, mas passamos um ExpiredOperation com apenas o ID
+                // Nota: aqui não temos a mensagem concreta, mas passamos um ExpiredOperation
+                // com apenas o ID
                 this.timeoutTimerID = setupTimer(new ExpiredOperation(metadataRequestID, null), operation_timeout);
                 this.setIsDoingOp(true);
 
@@ -580,13 +593,26 @@ public class Writer extends GenericProtocol {
     }
 
     // Read
-    public void uponReceiveMetadata(Metadata msg, Host from, short source, int chan)  {
+    public void uponReceiveMetadata(Metadata msg, Host from, short source, int chan) {
 
         PendingRead pr = pendingReads.get(msg.getRequestID());
         if (pr == null) {
             return;
         }
         pr.metadataResponses.put(from, msg);
+
+        byte[] identifierToBytes = msg.getIdentifier().getBytes(StandardCharsets.UTF_8);
+
+        try {
+            PublicKey keyMsg = this.truststore.getCertificate(msg.getIdentifier()).getPublicKey();
+            if (!SignaturesHelper.checkSignature(identifierToBytes, msg.getSignature(), keyMsg)) {
+                System.out.println("[READ] O node detentor do ficheiro enviado no read não está correto.");
+                return;
+            }
+        } catch (KeyStoreException | InvalidKeyException | SignatureException | NoSuchAlgorithmException e) {
+            e.printStackTrace();
+            System.out.println("[READ] Erro ao confirmar node detentor do ficheiro");
+        }
 
         if (pr.metadataResponses.size() >= pr.quorum && pr.selectedVersion == null) {
 
@@ -699,8 +725,7 @@ public class Writer extends GenericProtocol {
     private byte[] reconstructKey(Map<Integer, byte[]> shares) {
         if (shares.size() < threshold) {
             throw new IllegalArgumentException(
-                    "Needs at least " + threshold + " shares. Received: " + shares.size()
-            );
+                    "Needs at least " + threshold + " shares. Received: " + shares.size());
         }
 
         return scheme.join(shares);

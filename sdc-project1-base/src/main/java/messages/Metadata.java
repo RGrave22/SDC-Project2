@@ -1,6 +1,7 @@
 package messages;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import io.netty.buffer.ByteBuf;
@@ -17,9 +18,12 @@ public class Metadata extends SignedProtoMessage {
     private final int shareIndex;
     private final byte[] keyShare;
     private final UUID requestID;
+    private final String identifier;
+    private final byte[] signature;
 
     public Metadata(String filename, int version, String fileHash,
-            int shareIndex, byte[] keyShare, UUID requestID) {
+            int shareIndex, byte[] keyShare, UUID requestID,
+            String identifier, byte[] signature) {
         super(MESSAGE_ID);
         this.filename = filename;
         this.version = version;
@@ -27,6 +31,16 @@ public class Metadata extends SignedProtoMessage {
         this.shareIndex = shareIndex;
         this.keyShare = keyShare;
         this.requestID = requestID;
+        this.identifier = identifier;
+        this.signature = signature;
+    }
+
+    public String getIdentifier() {
+        return identifier;
+    }
+
+    public byte[] getSignature() {
+        return signature;
     }
 
     public String getFilename() {
@@ -53,11 +67,11 @@ public class Metadata extends SignedProtoMessage {
         return requestID;
     }
 
-    public static final SignedMessageSerializer<Metadata> serializer
-            = new SignedMessageSerializer<Metadata>() {
+    public static final SignedMessageSerializer<Metadata> serializer = new SignedMessageSerializer<Metadata>() {
 
         @Override
         public void serializeBody(Metadata msg, ByteBuf out) throws IOException {
+            // filename
             byte[] f = msg.filename.getBytes();
             out.writeInt(f.length);
             out.writeBytes(f);
@@ -73,24 +87,32 @@ public class Metadata extends SignedProtoMessage {
             out.writeInt(msg.keyShare.length);
             out.writeBytes(msg.keyShare);
 
-            out.writeLong(msg.requestID.getMostSignificantBits());
-            out.writeLong(msg.requestID.getLeastSignificantBits());
+            long msb = msg.requestID.getMostSignificantBits();
+            long lsb = msg.requestID.getLeastSignificantBits();
+            out.writeLong(msb);
+            out.writeLong(lsb);
+
+            byte[] id = msg.identifier.getBytes(StandardCharsets.UTF_8);
+            out.writeInt(id.length);
+            out.writeBytes(id);
+
+            out.writeInt(msg.signature.length);
+            out.writeBytes(msg.signature);
         }
 
         @Override
         public Metadata deserializeBody(ByteBuf in) throws IOException {
-
             int len = in.readInt();
             byte[] buff = new byte[len];
             in.readBytes(buff);
-            String filename = new String(buff);
+            String filename = new String(buff, StandardCharsets.UTF_8);
 
             int version = in.readInt();
 
             len = in.readInt();
-            byte[] hash = new byte[len];
-            in.readBytes(hash);
-            String fileHash = new String(hash);
+            byte[] hashBytes = new byte[len];
+            in.readBytes(hashBytes);
+            String fileHash = new String(hashBytes, StandardCharsets.UTF_8);
 
             int shareIndex = in.readInt();
 
@@ -102,8 +124,18 @@ public class Metadata extends SignedProtoMessage {
             long lsb = in.readLong();
             UUID req = new UUID(msb, lsb);
 
-            return new Metadata(filename, version, fileHash, shareIndex, keyShare, req);
+            len = in.readInt();
+            byte[] idBytes = new byte[len];
+            in.readBytes(idBytes);
+            String identifier = new String(idBytes, StandardCharsets.UTF_8);
+
+            len = in.readInt();
+            byte[] signature = new byte[len];
+            in.readBytes(signature);
+
+            return new Metadata(filename, version, fileHash, shareIndex, keyShare, req, identifier, signature);
         }
+
     };
 
     @Override
