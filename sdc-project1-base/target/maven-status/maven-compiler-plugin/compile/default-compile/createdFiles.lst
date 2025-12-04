@@ -13,6 +13,7 @@ messages\ReadMetadata$1.class
 app\messages\client\ReadLogEntryReply$1.class
 messages\WriteAcknowledge.class
 broadcast\messages\BroadcastMessage$1.class
+messages\HelloPublicKey$1.class
 replication\notifications\DeliverEntryNotification.class
 messages\List.class
 app\messages\client\ReadLogEntryReply.class
@@ -43,6 +44,7 @@ Writer\Writer.class
 Writer\Writer$PendingRead.class
 messages\DeleteAcknowledge.class
 membership\staticmembership\StaticMembershipProtocol.class
+messages\HelloPublicKey.class
 replication\requests\AppendRequest.class
 membership\staticmembership\message\HelloMessage$1.class
 common\events\ChannelAvailable.class

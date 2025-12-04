@@ -6,14 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.KeyStore;
-import java.security.KeyStoreException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.PrivateKey;
-import java.security.PublicKey;
-import java.security.SecureRandom;
-import java.security.UnrecoverableKeyException;
+import java.security.*;
 import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -28,26 +21,26 @@ import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 
+import messages.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.codahale.shamir.Scheme;
 
 import Writer.timers.ExpiredOperation;
-import messages.Metadata;
-import messages.Read;
-import messages.ReadData;
-import messages.ReadMetadata;
-import messages.Write;
-import messages.WriteAcknowledge;
-import messages.WriteMetadata;
-import messages.WriteMetadataAcknowledge;
 import pt.unl.fct.di.novasys.babel.core.GenericProtocol;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
+import pt.unl.fct.di.novasys.babel.generic.signed.InvalidSerializerException;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedProtoMessage;
+import pt.unl.fct.di.novasys.channel.ChannelEvent;
 import pt.unl.fct.di.novasys.channel.simpleclientserver.SimpleClientChannel;
+import pt.unl.fct.di.novasys.channel.simpleclientserver.events.ServerUpEvent;
+import pt.unl.fct.di.novasys.channel.tcp.events.OutConnectionDown;
+import pt.unl.fct.di.novasys.channel.tcp.events.OutConnectionFailed;
+import pt.unl.fct.di.novasys.channel.tcp.events.OutConnectionUp;
 import pt.unl.fct.di.novasys.network.data.Host;
 import utils.Crypto;
+import utils.SignaturesHelper;
 
 public class Writer extends GenericProtocol {
 
@@ -228,6 +221,8 @@ public class Writer extends GenericProtocol {
             registerMessageSerializer(hostChannels[i], ReadData.MESSAGE_ID, ReadData.serializer);
             registerMessageSerializer(hostChannels[i], Read.MESSAGE_ID, Read.serializer);
 
+            registerMessageSerializer(hostChannels[i], HelloPublicKey.MESSAGE_ID, HelloPublicKey.serializer);
+
             // Handlers
             registerMessageHandler(hostChannels[i], WriteAcknowledge.MESSAGE_ID, this::uponReceiveWriteAck);
             registerMessageHandler(hostChannels[i], WriteMetadataAcknowledge.MESSAGE_ID, this::uponReceiveMetadataWriteAck);
@@ -235,13 +230,31 @@ public class Writer extends GenericProtocol {
             registerMessageHandler(hostChannels[i], Metadata.MESSAGE_ID, this::uponReceiveMetadata);
             registerMessageHandler(hostChannels[i], ReadData.MESSAGE_ID, this::uponReceiveReadData);
 
+            registerChannelEventHandler(hostChannels[i], ServerUpEvent.EVENT_ID, this::uponServerUp);
+
+
             openConnection(servers.get(i), hostChannels[i]);
             System.out.println("[WRITER] Estamos a abrir um canal entre: " + servers.get(i).toString() + ": " + channelID);
 
         }
 
         registerTimerHandler(ExpiredOperation.TIMER_ID, this::handleExpiredTimer);
+        //sendHelloMessages();
+    }
 
+    private void uponOutConnectionFailed(ChannelEvent channelEvent, int i) {
+    }
+
+    private void uponOutConnectionDown(ChannelEvent channelEvent, int i) {
+    }
+
+    private void uponServerUp(ServerUpEvent event, int channelId) {
+        Host server = event.getServer();
+        System.out.println("[WRITER] Connection UP to " + server + " on channel " + channelId);
+
+        HelloPublicKey msg = new HelloPublicKey(mySelf, myPublicKey);
+        sendMessage(channelId, msg, APP_SERVER_PROTO, server, 0);
+        System.out.println("[WRITER] Sent HelloPublicKey to " + server);
     }
 
     public boolean getIdDoingOp() {
@@ -253,6 +266,12 @@ public class Writer extends GenericProtocol {
     }
 
     public void uploadFile(String filename) {
+
+        for (int i = 0; i < servers.size(); i++) {
+            HelloPublicKey msg = new HelloPublicKey(mySelf, myPublicKey);
+            System.out.println("A enviar as mensagens");
+            sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
+        }
 
         if (filename == null || filename.isEmpty()) {
             System.out.println("Usage: UPLOAD <filename>");
@@ -307,9 +326,13 @@ public class Writer extends GenericProtocol {
             //Parte a chave
             Map<Integer, byte[]> keyShares = splitKey(encryptionKey);
 
-            //Metadata File
             Write msg = new Write(myIdentifier, encryptedFile, filename, filesVersions.get(filename));
+            List<Host> servers2 = new ArrayList<>(servers);
+            pendingAcks.put(msg.getRequestID(), servers2);
 
+            msg.signMessage(myPrivateKey);
+
+            //Metadata File
             for (int i = 0; i < servers.size(); i++) {
                 Path metadataPath = Paths.get(UPLOAD_DIR + "-" + myIdentifier, i + "-metadata-" + filename);
 
@@ -330,9 +353,6 @@ public class Writer extends GenericProtocol {
                 System.out.println("Mensagem enviada para: " + servers.get(i).toString());
             }
 
-            List<Host> servers2 = new ArrayList<>(servers);
-            pendingAcks.put(msg.getRequestID(), servers2);
-
             this.setIsDoingOp(true);
             clearTimeout();
             this.timeoutTimerID = setupTimer(new ExpiredOperation(msg.getRequestID(), msg), operation_timeout);
@@ -347,7 +367,7 @@ public class Writer extends GenericProtocol {
         }
     }
 
-    public void downloadFile(String filename) {
+    public void downloadFile(String filename)  {
         if (filename == null || filename.isEmpty()) {
             System.out.println("Usage: DOWNLOAD <filename> <outputName>");
             return;
@@ -360,8 +380,21 @@ public class Writer extends GenericProtocol {
 
         System.out.println("[READ] Starting download of " + filename + " with request " + rid);
 
+        ReadMetadata msg = new ReadMetadata(filename, rid);
+        try {
+            msg.signMessage(myPrivateKey);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        } catch (InvalidKeyException e) {
+            throw new RuntimeException(e);
+        } catch (SignatureException e) {
+            throw new RuntimeException(e);
+        } catch (InvalidSerializerException e) {
+            throw new RuntimeException(e);
+        }
+
         for (int i = 0; i < servers.size(); i++) {
-            sendMessage(hostChannels[i], new ReadMetadata(filename, rid), APP_SERVER_PROTO, servers.get(i), 0);
+            sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
         }
 
         clearTimeout();
@@ -453,13 +486,13 @@ public class Writer extends GenericProtocol {
                             int shareIndex = Integer.parseInt(parts[2]);
                             String keyShareB64 = parts[3];
 
-                            byte[] encryptedMetadata = metadataBytes; // metadata vai em claro
+                            //Encrypt metadata
 
                             // 5. ENVIAR PARA SERVIDOR
                             WriteMetadata metadataMsg = new WriteMetadata(
-                                    filename, version, encryptedMetadata, fileHashDecored, metadataRequestID
+                                    filename, version, metadataBytes, fileHashDecored, metadataRequestID
                             );
-
+                            metadataMsg.signMessage(myPrivateKey);
                             sendMessage(hostChannels[j], metadataMsg, APP_SERVER_PROTO, servers.get(j), 0);
 
                             System.out.println("Parsed → v" + version
@@ -547,13 +580,12 @@ public class Writer extends GenericProtocol {
     }
 
     // Read
-    public void uponReceiveMetadata(Metadata msg, Host from, short source, int chan) {
+    public void uponReceiveMetadata(Metadata msg, Host from, short source, int chan)  {
 
         PendingRead pr = pendingReads.get(msg.getRequestID());
         if (pr == null) {
             return;
         }
-
         pr.metadataResponses.put(from, msg);
 
         if (pr.metadataResponses.size() >= pr.quorum && pr.selectedVersion == null) {
@@ -570,8 +602,21 @@ public class Writer extends GenericProtocol {
             System.out.println("[READ] Chosen version " + pr.selectedVersion
                     + " for file " + pr.filename);
 
+            Read rmsg = new Read(pr.filename, pr.selectedVersion, pr.requestID);
+            try {
+                rmsg.signMessage(myPrivateKey);
+            } catch (NoSuchAlgorithmException e) {
+                throw new RuntimeException(e);
+            } catch (InvalidKeyException e) {
+                throw new RuntimeException(e);
+            } catch (SignatureException e) {
+                throw new RuntimeException(e);
+            } catch (InvalidSerializerException e) {
+                throw new RuntimeException(e);
+            }
+
             for (int i = 0; i < servers.size(); i++) {
-                sendMessage(hostChannels[i], new Read(pr.filename, pr.selectedVersion, pr.requestID), APP_SERVER_PROTO, servers.get(i), 0);
+                sendMessage(hostChannels[i], rmsg, APP_SERVER_PROTO, servers.get(i), 0);
             }
         }
     }
@@ -622,7 +667,7 @@ public class Writer extends GenericProtocol {
                 clearTimeout();
                 return;
             }
-            Path out = Paths.get(UPLOAD_DIR + "-" + myIdentifier, pr.filename + "-download");
+            Path out = Paths.get(UPLOAD_DIR + "-" + myIdentifier, "download-" + pr.filename);
             if (!Files.exists(out.getParent())) {
                 Files.createDirectories(out.getParent());
             }

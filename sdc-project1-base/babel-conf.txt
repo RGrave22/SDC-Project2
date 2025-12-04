@@ -16,7 +16,7 @@ writer 127.0.0.1:5000
 
 storage.services 127.0.0.1:5100,127.0.0.1:6100,127.0.0.1:7100,127.0.0.1:8100
 
-operation_timeout 1000
+operation_timeout 5000
 
 # Crypto configuration parameters
 

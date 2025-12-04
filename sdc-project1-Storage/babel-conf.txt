@@ -10,11 +10,12 @@ address 127.0.0.1
 # Static Membership Protocol Configuration
 
 # membership.myhost - this one is different for each process and you must provide
-membership.neighbors 127.0.0.1:5001,127.0.0.1:6001,127.0.0.1:7001,127.0.0.1:8001
+membership.neighbors 127.0.0.1:5000,127.0.0.1:6000,127.0.0.1:7000,127.0.0.1:8000
 
 # Crypto configuration parameters
 
 # crypto_name - this one is different for each process and you have to provide in the command line
+crypto_names node1,node2,node3,node4
 key_store_folder crypto-material
 key_store_password password
 trust_store crypto-material/truststore.ks
