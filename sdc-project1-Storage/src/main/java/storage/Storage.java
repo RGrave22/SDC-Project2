@@ -123,6 +123,11 @@ public class Storage extends GenericProtocol {
         registerMessageSerializer(channelID, WriteMetadata.MESSAGE_ID, WriteMetadata.serializer);
         registerMessageSerializer(channelID, WriteMetadataAcknowledge.MESSAGE_ID, WriteMetadataAcknowledge.serializer);
 
+        registerMessageSerializer(channelID, Delete.MESSAGE_ID, Delete.serializer);
+        registerMessageSerializer(channelID, DeleteAcknowledge.MESSAGE_ID, DeleteAcknowledge.serializer);
+        registerMessageSerializer(channelID, ListRequest.MESSAGE_ID, ListRequest.serializer);
+        registerMessageSerializer(channelID, ListReply.MESSAGE_ID, ListReply.serializer);
+
         registerMessageSerializer(channelID, ReadMetadata.MESSAGE_ID, ReadMetadata.serializer);
         registerMessageSerializer(channelID, Metadata.MESSAGE_ID, Metadata.serializer);
         registerMessageSerializer(channelID, ReadData.MESSAGE_ID, ReadData.serializer);
@@ -139,21 +144,25 @@ public class Storage extends GenericProtocol {
 
         registerMessageHandler(channelID, HelloPublicKey.MESSAGE_ID, this::uponReceiveHello);
 
+        registerMessageHandler(channelID, Delete.MESSAGE_ID, this::uponReceiveDelete);
+        registerMessageHandler(channelID, ListRequest.MESSAGE_ID, this::uponReceiveList);
     }
 
+    //Metodo para registo dos clientes.
     private void uponReceiveHello(HelloPublicKey msg, Host host, short i, int i1) {
-        System.out.println("Recebemos a public key do: " + msg.getHost().toString() + " : " + host.toString());
+        System.out.println("Received public key from: " + host.toString());
         publicKeys.put(host, msg.getPublicKey());
     }
 
+
     // Write
     private void uponReceiveWriteMessage(Write write, Host host, short sourceProto, int channelID) {
-        System.out.println("[STORAGE] RECEBI WRITE para " + write.getFilename());
+        System.out.println("Received request to upload file: " + write.getFilename());
 
         try {
 
             if (!write.checkSignature(publicKeys.get(host))) {
-                logger.error("[STORAGE] ERROR CHECKING PUBLIC KEY");
+                logger.error("Unauthenticated client");
                 WriteAcknowledge wAck = new WriteAcknowledge(
                         write.getFilename(),
                         write.getRequestID(),
@@ -163,7 +172,6 @@ public class Storage extends GenericProtocol {
                 return;
             }
 
-            System.out.println("[STORAGE] SIGNATURE OKOKOKOKOK");
             String filename = write.getFilename();
             int version = write.getVersion();
             byte[] encryptedFile = write.getEncryptedFile();
@@ -171,21 +179,19 @@ public class Storage extends GenericProtocol {
             Host h = filesAuthors.get(filename);
 
             if (h != null && h.getPort() != host.getPort()) {
-                System.out.println("Upload realizado pelo cliente errado.");
+                System.out.println("Unauthorized, this file does not belong to you");
                 return;
             }
 
-            // 1. Criar diretório filename (se não existir)
+
             Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
             Files.createDirectories(fileDir);
-            System.out.println("Criada diretório: " + fileDir);
 
             int expectedVersion = getNextExpectedVersion(fileDir);
             if (version != expectedVersion) {
-                System.err.println("Versão incorreta! Esperada: " + expectedVersion
-                        + ", Recebida: " + version);
+                System.err.println("Incorrect version, expected: " + expectedVersion
+                        + ", received: " + version);
 
-                // Responder NACK por versão incorreta
                 WriteAcknowledge wAck = new WriteAcknowledge(
                         write.getFilename(),
                         write.getRequestID(),
@@ -195,29 +201,24 @@ public class Storage extends GenericProtocol {
                 return;
             }
 
-            // 2. Guardar ficheiro como value-<versão>
             Path valueFile = fileDir.resolve("value-" + version);
             Files.write(valueFile, encryptedFile);
 
-            System.out.println("Guardado value-" + version
+            System.out.println("Stored file: " + write.getFilename() + " on value-" + version
                     + " (size: " + encryptedFile.length + " bytes)");
 
-            // 3. Responder ACK
             WriteAcknowledge wAck = new WriteAcknowledge(
                     write.getFilename(),
                     write.getRequestID(),
                     true,
                     this.mySelf);
-            System.out.println("ESTA È A PUTA: " + wAck.getRequestID());
             sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
-            System.out.println("FODASE");
 
             filesAuthors.put(filename, host);
 
         } catch (IOException e) {
-            System.err.println("Erro ao processar Write: " + e.getMessage());
+            System.err.println("Error processing upload: " + e.getMessage());
 
-            // Responder NACK
             WriteAcknowledge wAck = new WriteAcknowledge(
                     write.getFilename(),
                     write.getRequestID(),
@@ -225,11 +226,11 @@ public class Storage extends GenericProtocol {
                     this.mySelf);
             sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
         } catch (Exception e) {
-            System.out.println("DEU MERDA: " + e.getMessage());
             throw new RuntimeException(e);
         }
     }
 
+    //Auxiliar function to retreive the expected version on the Storage
     private int getNextExpectedVersion(Path fileDir) throws IOException {
         if (!Files.exists(fileDir)) {
             return 1;
@@ -246,7 +247,7 @@ public class Storage extends GenericProtocol {
                     int version = Integer.parseInt(versionStr);
                     maxVersion = Math.max(maxVersion, version);
                 } catch (NumberFormatException e) {
-                    System.err.println("Ficheiro com nome inválido: " + fileName);
+                    System.err.println("Invalid file: " + fileName);
                 }
             }
         }
@@ -255,12 +256,12 @@ public class Storage extends GenericProtocol {
     }
 
     private void uponReceiveWriteMetadataMessage(WriteMetadata writeM, Host host, short sourceProto, int channelID) {
-        System.out.println("[STORAGE] RECEBI WriteMetadata para " + writeM.getFilename() + "do Host: " + host.toString());
+        System.out.println("Received WriteMetadata for file: " + writeM.getFilename() + "from Host: " + host.toString());
 
         try {
 
             if (!writeM.checkSignature(publicKeys.get(host))) {
-                logger.error("[STORAGE] ERROR CHECKING PUBLIC KEY");
+                logger.error("Unauthenticated client");
                 WriteMetadataAcknowledge wAck = new WriteMetadataAcknowledge(
                         writeM.getFilename(),
                         false,
@@ -274,32 +275,26 @@ public class Storage extends GenericProtocol {
             int version = writeM.getVersion();
             byte[] metadataBytes = writeM.getFileBytes();
 
-            // 1. Verificar se diretório existe
             Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
             if (!Files.exists(fileDir)) {
-                System.err.println("Diretório não existe: " + fileDir);
-                // NACK se diretório não existir
+                System.err.println("Directory: " + fileDir + "doesn't exist");
                 WriteMetadataAcknowledge nack = new WriteMetadataAcknowledge(
                         filename, false, mySelf, writeM.getRequestID());
                 sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
                 return;
             }
 
-            // 2. Substituir ficheiro metadata (sobrescreve)
             Path metadataFile = fileDir.resolve("metadata");
             Files.write(metadataFile, metadataBytes);
 
-            System.out.println("Substituído metadata (size: " + metadataBytes.length + " bytes)");
-            System.out.println("Content preview: "
-                    + new String(metadataBytes, StandardCharsets.UTF_8).substring(0, 50) + "...");
+            System.out.println("Metadata changed (size: " + metadataBytes.length + " bytes)");
 
-            // 3. Responder ACK
             WriteMetadataAcknowledge ack = new WriteMetadataAcknowledge(
                     filename, true, mySelf, writeM.getRequestID());
             sendMessage(channelID, ack, APP_CLIENT_WRITER, host, 0);
 
         } catch (IOException e) {
-            System.err.println("Erro ao processar WriteMetadata: " + e.getMessage());
+            System.err.println("Error processing WriteMetadata: " + e.getMessage());
 
             WriteMetadataAcknowledge nack = new WriteMetadataAcknowledge(
                     writeM.getFilename(), false, mySelf, writeM.getRequestID());
@@ -319,11 +314,11 @@ public class Storage extends GenericProtocol {
 
     // Read
     private void uponReceiveReadMetadataMessage(ReadMetadata readM, Host host, short sourceProto, int channelID) {
-        System.out.println("[STORAGE] Received ReadMetadata for file: " + readM.getFilename());
+        System.out.println("Received ReadMetadata for file: " + readM.getFilename());
         try {
 
             if (!readM.checkSignature(publicKeys.get(host))) {
-                logger.error("[STORAGE] ERROR CHECKING PUBLIC KEY");
+                logger.error("Unauthenticated client");
                 return;
             }
 
@@ -331,20 +326,20 @@ public class Storage extends GenericProtocol {
             Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
 
             if (!Files.exists(fileDir)) {
-                System.err.println("[STORAGE] File directory does not exist: " + fileDir);
+                System.err.println("File directory does not exist: " + fileDir);
                 return;
             }
 
             Path metadataFile = fileDir.resolve("metadata");
             if (!Files.exists(metadataFile)) {
-                System.err.println("[STORAGE] Metadata file not found for " + filename);
+                System.err.println("Metadata file not found for " + filename);
                 return;
             }
 
             byte[] metadataBytes = Files.readAllBytes(metadataFile);
             String[] parts = new String(metadataBytes, StandardCharsets.UTF_8).split("\\|");
             if (parts.length != 6) {
-                System.err.println("[STORAGE] Metadata format invalid for " + filename);
+                System.err.println("Metadata format invalid for " + filename);
                 return;
             }
 
@@ -366,21 +361,21 @@ public class Storage extends GenericProtocol {
                     sign);
 
             sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
-            System.out.println("[STORAGE] Sent Metadata for " + filename + " to " + host);
+            System.out.println("Sent Metadata for " + filename + " to " + host);
 
         } catch (IOException e) {
-            System.err.println("[STORAGE] Error reading metadata: " + e.getMessage());
+            System.err.println("Error reading metadata: " + e.getMessage());
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
     private void uponReceiveReadMessage(Read read, Host host, short sourceProto, int channelID) {
-        System.out.println("[STORAGE] Received Read (data request) for file: " + read.getFilename());
+        System.out.println("Received Read for file: " + read.getFilename());
         try {
 
             if (!read.checkSignature(publicKeys.get(host))) {
-                logger.error("[STORAGE] ERROR CHECKING PUBLIC KEY");
+                logger.error("Unauthenticated client");
                 return;
             }
 
@@ -389,7 +384,7 @@ public class Storage extends GenericProtocol {
             Path valueFile = Paths.get(mySelf.getPort() + "-storage/" + filename, "value-" + requestedVersion);
 
             if (!Files.exists(valueFile)) {
-                System.err.println("[STORAGE] Value file does not exist: " + valueFile);
+                System.err.println("Value file does not exist: " + valueFile);
                 return;
             }
 
@@ -397,12 +392,150 @@ public class Storage extends GenericProtocol {
             ReadData dataMsg = new ReadData(filename, requestedVersion, encryptedFile, read.getRequestID());
             sendMessage(channelID, dataMsg, APP_CLIENT_WRITER, host, 0);
 
-            System.out.println("[STORAGE] Sent ReadData for " + filename + " to " + host);
+            System.out.println("Sent ReadData for " + filename + " to " + host);
         } catch (IOException e) {
-            System.err.println("[STORAGE] Error reading file: " + e.getMessage());
+            System.err.println("Error reading file: " + e.getMessage());
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
+
+    // Delete
+    private void uponReceiveDelete(Delete delete, Host host, short sourceProto, int channelID) {
+        System.out.println("Received Delete for file: " + delete.getFilename());
+
+        try {
+
+            if (!delete.checkSignature(publicKeys.get(host))) {
+                logger.error("Unauthenticated client");
+                DeleteAcknowledge nack = new DeleteAcknowledge(
+                        delete.getFilename(),
+                        delete.getRequestID(),
+                        false
+                );
+                sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
+                return;
+            }
+
+            String filename = delete.getFilename();
+
+            // Verificar se o cliente que está a apagar é o autor original
+            Host author = filesAuthors.get(filename);
+            if (author != null && author.getPort() != host.getPort()) {
+                System.err.println("Delete rejected: client is not the file author");
+                DeleteAcknowledge nack = new DeleteAcknowledge(
+                        filename,
+                        delete.getRequestID(),
+                        false
+                );
+                sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
+                return;
+            }
+
+            Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
+
+            boolean success = deleteDirectory(fileDir);
+
+            if (success) {
+                filesAuthors.remove(filename);
+                System.out.println("Successfully deleted file directory: " + fileDir);
+            }
+
+            DeleteAcknowledge ack = new DeleteAcknowledge(
+                    filename,
+                    delete.getRequestID(),
+                    success
+            );
+            sendMessage(channelID, ack, APP_CLIENT_WRITER, host, 0);
+
+            System.out.println("Sent DeleteAcknowledge for " + filename + " to " + host);
+
+        } catch (Exception e) {
+            System.err.println("Unexpected error in Delete handler: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    // List
+    private void uponReceiveList(ListRequest listReq, Host host, short sourceProto, int channelID) {
+        System.out.println("Received ListRequest with pattern: " + listReq.getSearchPattern());
+
+        try {
+
+            if (!listReq.checkSignature(publicKeys.get(host))) {
+                logger.error("Unauthenticated client");
+                return;
+            }
+
+            String searchPattern = listReq.getSearchPattern();
+            List<String> matchingFiles = new ArrayList<>();
+
+            Path storageDir = Paths.get(mySelf.getPort() + "-storage");
+
+            if (Files.exists(storageDir) && Files.isDirectory(storageDir)) {
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(storageDir)) {
+                    for (Path entry : stream) {
+                        if (Files.isDirectory(entry)) {
+                            String filename = entry.getFileName().toString();
+
+                            if (searchPattern.isEmpty() || filename.contains(searchPattern)) {
+                                Path metadataFile = entry.resolve("metadata");
+                                if (Files.exists(metadataFile)) {
+                                    matchingFiles.add(filename);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            System.out.println("Found " + matchingFiles.size() + " matching files");
+
+            ListReply reply = new ListReply(listReq.getRequestID(), matchingFiles);
+            sendMessage(channelID, reply, APP_CLIENT_WRITER, host, 0);
+
+            System.out.println("Sent ListReply to " + host + " with " + matchingFiles.size() + " files");
+
+        } catch (IOException e) {
+            System.err.println("Error listing files: " + e.getMessage());
+
+            try {
+                ListReply emptyReply = new ListReply(listReq.getRequestID(), new ArrayList<>());
+                sendMessage(channelID, emptyReply, APP_CLIENT_WRITER, host, 0);
+            } catch (Exception ex) {
+                System.err.println("Error sending empty ListReply: " + ex.getMessage());
+            }
+        } catch (Exception e) {
+            System.err.println("Unexpected error in List handler: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    //Aux function to delete the file directory
+    private boolean deleteDirectory(Path directory) {
+        try {
+            if (!Files.exists(directory)) {
+                System.err.println("Directory does not exist: " + directory);
+                return true;
+            }
+
+            Files.walk(directory)
+                    .sorted(Comparator.reverseOrder())
+                    .forEach(path -> {
+                        try {
+                            Files.delete(path);
+                        } catch (IOException e) {
+                            System.err.println("Error deleting: " + path + " - " + e.getMessage());
+                        }
+                    });
+
+            return true;
+
+        } catch (IOException e) {
+            System.err.println("Error walking directory: " + e.getMessage());
+            return false;
+        }
+    }
+
 
 }

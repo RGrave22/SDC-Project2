@@ -31,6 +31,7 @@ import com.codahale.shamir.Scheme;
 import Writer.timers.ExpiredOperation;
 import pt.unl.fct.di.novasys.babel.core.GenericProtocol;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
+import pt.unl.fct.di.novasys.babel.generic.ProtoMessage;
 import pt.unl.fct.di.novasys.babel.generic.signed.InvalidSerializerException;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedProtoMessage;
 import pt.unl.fct.di.novasys.channel.ChannelEvent;
@@ -89,6 +90,13 @@ public class Writer extends GenericProtocol {
     private long timeoutTimerID;
     public final static String OPERATION_TIMEOUT = "operation_timeout";
 
+    //delete
+    private Map<UUID, List<Host>> pendingDeleteAcks;
+
+    //list
+    private Map<UUID, ListPendingResponse> pendingListResponses;
+
+
     private Map<UUID, List<Host>> pendingAcks;
     private Map<UUID, PendingRead> pendingReads;
     public volatile boolean isDoingOp = false;
@@ -129,6 +137,9 @@ public class Writer extends GenericProtocol {
 
         this.servers = new ArrayList<>();
         this.pendingReads = new HashMap<>();
+
+        this.pendingDeleteAcks = new HashMap<>();
+        this.pendingListResponses = new HashMap<>();
 
         // TRATAR DA PARTE DOS SERVERS
         this.f = 0;
@@ -218,6 +229,11 @@ public class Writer extends GenericProtocol {
             registerMessageSerializer(hostChannels[i], WriteMetadataAcknowledge.MESSAGE_ID,
                     WriteMetadataAcknowledge.serializer);
 
+            registerMessageSerializer(hostChannels[i], Delete.MESSAGE_ID, Delete.serializer);
+            registerMessageSerializer(hostChannels[i], DeleteAcknowledge.MESSAGE_ID, DeleteAcknowledge.serializer);
+            registerMessageSerializer(hostChannels[i], ListRequest.MESSAGE_ID, ListRequest.serializer);
+            registerMessageSerializer(hostChannels[i], ListReply.MESSAGE_ID, ListReply.serializer);
+
             registerMessageSerializer(hostChannels[i], ReadMetadata.MESSAGE_ID, ReadMetadata.serializer);
             registerMessageSerializer(hostChannels[i], Metadata.MESSAGE_ID, Metadata.serializer);
             registerMessageSerializer(hostChannels[i], ReadData.MESSAGE_ID, ReadData.serializer);
@@ -235,6 +251,9 @@ public class Writer extends GenericProtocol {
 
             registerChannelEventHandler(hostChannels[i], ServerUpEvent.EVENT_ID, this::uponServerUp);
 
+            registerMessageHandler(hostChannels[i], DeleteAcknowledge.MESSAGE_ID, this::uponReceiveDeleteAck);
+            registerMessageHandler(hostChannels[i], ListReply.MESSAGE_ID, this::uponReceiveListReply);
+
             openConnection(servers.get(i), hostChannels[i]);
             System.out.println(
                     "[WRITER] Estamos a abrir um canal entre: " + servers.get(i).toString() + ": " + channelID);
@@ -242,14 +261,9 @@ public class Writer extends GenericProtocol {
         }
 
         registerTimerHandler(ExpiredOperation.TIMER_ID, this::handleExpiredTimer);
-        // sendHelloMessages();
+
     }
 
-    private void uponOutConnectionFailed(ChannelEvent channelEvent, int i) {
-    }
-
-    private void uponOutConnectionDown(ChannelEvent channelEvent, int i) {
-    }
 
     private void uponServerUp(ServerUpEvent event, int channelId) {
         Host server = event.getServer();
@@ -710,6 +724,171 @@ public class Writer extends GenericProtocol {
         clearTimeout();
     }
 
+    //Delete
+    public void deleteFile(String filename) {
+        if (filename == null || filename.isEmpty()) {
+            System.out.println("Usage: DELETE <filename>");
+            return;
+        }
+
+        System.out.println("[WRITER] Deleting file: " + filename);
+
+        Delete msg = new Delete(filename);
+
+        try {
+            msg.signMessage(myPrivateKey);
+        } catch (Exception e) {
+            System.err.println("[WRITER] Error signing delete message: " + e.getMessage());
+            return;
+        }
+
+        List<Host> serversCopy = new ArrayList<>(servers);
+        pendingDeleteAcks.put(msg.getRequestID(), serversCopy);
+
+        for (int i = 0; i < servers.size(); i++) {
+            sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
+        }
+
+        this.setIsDoingOp(true);
+        clearTimeout();
+        this.timeoutTimerID = setupTimer(new ExpiredOperation(msg.getRequestID(), msg), operation_timeout);
+
+        System.out.println("[WRITER] Delete request sent for: " + filename);
+    }
+
+    private void uponReceiveDeleteAck(DeleteAcknowledge ack, Host host, short i, int i1) {
+            List<Host> serversAux = pendingDeleteAcks.get(ack.getRequestID());
+
+        if (serversAux == null) {
+            System.out.println("[WRITER] DeleteAck for unknown/cleared request: " + ack.getRequestID());
+            return;
+        }
+
+        synchronized (serversAux) {
+            serversAux.remove(host);
+        }
+
+        int remaining = serversAux.size();
+        System.out.println("[WRITER] DELETE ACK from " + host + ", remaining: " + remaining + "/" + servers.size());
+
+        if (remaining <= f) {
+            System.out.println("[WRITER] Delete quorum reached for file: " + ack.getFilename());
+
+            // Remove from versions map
+            filesVersions.remove(ack.getFilename());
+
+            pendingDeleteAcks.remove(ack.getRequestID());
+            clearTimeout();
+            this.setIsDoingOp(false);
+
+            System.out.println("[WRITER] File deleted successfully: " + ack.getFilename());
+        }
+    }
+
+    //List
+    public void listFiles(String searchPattern) {
+        if (searchPattern == null) {
+            searchPattern = "";
+        }
+
+        System.out.println("[WRITER] Listing files matching: " + (searchPattern.isEmpty() ? "*" : searchPattern));
+
+        ListRequest msg = new ListRequest(searchPattern);
+
+        try {
+            msg.signMessage(myPrivateKey);
+        } catch (Exception e) {
+            System.err.println("[WRITER] Error signing list message: " + e.getMessage());
+            return;
+        }
+
+        UUID rid = msg.getRequestID();
+        List<Host> serversCopy = new ArrayList<>(servers);
+        ListPendingResponse pending = new ListPendingResponse(searchPattern, rid, serversCopy);
+        pendingListResponses.put(rid, pending);
+//        // Send only to first server (or you can query all for redundancy)
+//        sendMessage(hostChannels[0], msg, APP_SERVER_PROTO, servers.get(0), 0);
+
+        for (int i = 0; i < servers.size(); i++) {
+            sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
+        }
+
+        this.setIsDoingOp(true);
+        clearTimeout();
+        this.timeoutTimerID = setupTimer(new ExpiredOperation(msg.getRequestID(), msg), operation_timeout);
+    }
+
+//    private void uponReceiveListReply(ListReply response, Host host, short i, int i1) {
+//            ListPendingResponse pending = pendingListResponses.get(response.getRequestID());
+//
+//        if (pending == null) {
+//            System.out.println("[WRITER] ListResponse for unknown/cleared request: " + response.getRequestID());
+//            return;
+//        }
+//
+//        pending.aggregatedFiles.addAll(response.getFilenames());
+//        pending.responsesReceived++;
+//
+//        System.out.println("[WRITER] Received list response from " + host);
+//        System.out.println("[WRITER] Files found:");
+//
+//        if (pending.aggregatedFiles.isEmpty()) {
+//            System.out.println("  (no files found)");
+//        } else {
+//            for (String filename : pending.aggregatedFiles) {
+//                System.out.println("  - " + filename);
+//            }
+//        }
+//
+//        pendingListResponses.remove(response.getRequestID());
+//        clearTimeout();
+//        this.setIsDoingOp(false);
+//    }
+
+    private void uponReceiveListReply(ListReply response, Host host, short i, int i1) {
+        ListPendingResponse pending = pendingListResponses.get(response.getRequestID());
+
+        if (pending == null) {
+            System.out.println("[WRITER] ListResponse for unknown/cleared request: " + response.getRequestID());
+            return;
+        }
+
+        // Adicionar ficheiros sem duplicados
+        for (String filename : response.getFilenames()) {
+            if (!pending.aggregatedFiles.contains(filename)) {
+                pending.aggregatedFiles.add(filename);
+            }
+        }
+
+        // Remover este host da lista de pendentes (tal como nos outros)
+        synchronized (pending.pendingHosts) {
+            pending.pendingHosts.remove(host);
+        }
+
+        int remaining = pending.pendingHosts.size();
+        System.out.println("[WRITER] LIST reply from " + host + ", remaining: " + remaining + "/" + servers.size());
+
+        if (remaining <= f) {
+            System.out.println("[WRITER] List quorum reached! Files found:");
+
+            if (pending.aggregatedFiles.isEmpty()) {
+                System.out.println("  (no files found)");
+            } else {
+                pending.aggregatedFiles.sort(String::compareTo);
+                for (String filename : pending.aggregatedFiles) {
+                    System.out.println("  - " + filename);
+                }
+            }
+
+            pendingListResponses.remove(response.getRequestID());
+            clearTimeout();
+            this.setIsDoingOp(false);
+
+            System.out.println("[WRITER] Total: " + pending.aggregatedFiles.size() + " file(s)");
+        }
+    }
+
+
     private void clearTimeout() {
         if (timeoutTimerID != -1) {
             cancelTimer(timeoutTimerID);
@@ -753,6 +932,32 @@ public class Writer extends GenericProtocol {
         Cipher cipher = Cipher.getInstance("AES");
         cipher.init(Cipher.DECRYPT_MODE, key);
         return cipher.doFinal(encrypted);
+    }
+
+
+//    public static class ListPendingResponse {
+//        public final String searchPattern;
+//        public final UUID requestID;
+//        public List<String> aggregatedFiles = new ArrayList<>();
+//        public int responsesReceived = 0;
+//
+//        public ListPendingResponse(String searchPattern, UUID requestID) {
+//            this.searchPattern = searchPattern;
+//            this.requestID = requestID;
+//        }
+//    }
+
+    public static class ListPendingResponse {
+        public final String searchPattern;
+        public final UUID requestID;
+        public final List<String> aggregatedFiles = new ArrayList<>();
+        public final List<Host> pendingHosts;
+
+        public ListPendingResponse(String searchPattern, UUID requestID, List<Host> pendingHosts) {
+            this.searchPattern = searchPattern;
+            this.requestID = requestID;
+            this.pendingHosts = pendingHosts;
+        }
     }
 
 }

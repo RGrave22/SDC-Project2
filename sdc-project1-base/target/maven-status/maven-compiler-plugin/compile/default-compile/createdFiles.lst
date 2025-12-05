@@ -1,3 +1,4 @@
+messages\ListRequest$1.class
 app\DistributedLogManager.class
 messages\ListReply.class
 membership\staticmembership\message\HelloMessage.class
@@ -15,11 +16,12 @@ messages\WriteAcknowledge.class
 broadcast\messages\BroadcastMessage$1.class
 messages\HelloPublicKey$1.class
 replication\notifications\DeliverEntryNotification.class
-messages\List.class
+messages\ListReply$1.class
 app\messages\client\ReadLogEntryReply.class
 messages\Metadata$1.class
 app\messages\client\AppendToLog$1.class
 messages\Metadata.class
+messages\ListRequest.class
 messages\ReadData$1.class
 common\events\NeighborUp.class
 membership\staticmembership\message\HelloReplyMessage$1.class
@@ -48,14 +50,17 @@ messages\HelloPublicKey.class
 replication\requests\AppendRequest.class
 membership\staticmembership\message\HelloMessage$1.class
 common\events\ChannelAvailable.class
+messages\DeleteAcknowledge$1.class
 broadcast\notifications\DeliveryNotification.class
 replication\ReplicationProtocolPlaceholder.class
 app\messages\client\SubscribeToLog.class
+messages\Delete$1.class
 utils\SignaturesHelper.class
 messages\Delete.class
 messages\Read$1.class
 messages\WriteMetadataAcknowledge.class
 messages\WriteAcknowledge$1.class
+Writer\Writer$ListPendingResponse.class
 messages\WriteMetadataAcknowledge$1.class
 app\messages\client\AppendToLogReply$1.class
 app\messages\client\SubscribeToLog$1.class

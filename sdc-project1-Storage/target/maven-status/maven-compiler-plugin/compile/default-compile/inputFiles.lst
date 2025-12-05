@@ -6,6 +6,7 @@ D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\mai
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\broadcast\messages\BroadcastMessage.java
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\common\events\NeighborDown.java
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\utils\SignaturesHelper.java
+D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\messages\ListRequest.java
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\storage\Storage.java
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\common\events\NeighborUp.java
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\messages\Read.java
@@ -27,7 +28,6 @@ D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\mai
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\app\messages\client\ReadLogEntryReply.java
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\broadcast\CrashFaultReliableBroadcastProtocol.java
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\membership\staticmembership\message\HelloReplyMessage.java
-D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\messages\List.java
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\common\events\ChannelAvailable.java
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\messages\ListReply.java
 D:\RodrigoPC\FCT\5Ano\SDC\SDC-Project2\SDC-Project2\sdc-project1-Storage\src\main\java\utils\PublicKeyHelper.java

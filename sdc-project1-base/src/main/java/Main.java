@@ -79,10 +79,10 @@ public class Main {
 
                         break;
                     case "DELETE":
-                        //TODO
+                        w.deleteFile(argument);
                         break;
                     case "LIST":
-                        //TODO
+                        w.listFiles(argument);
                         break;
                     case "QUIT":
                         System.out.println("Leaving...");
@@ -93,27 +93,6 @@ public class Main {
                 }
             }
         }
-
-//        }else{
-//            Reader r = new Reader();
-//            babel.registerProtocol(r);
-//            r.init(props);
-//            babel.start();
-//            System.err.println("Babel has started...");
-//        }
-//		DistributedLogManager dlm = new DistributedLogManager();
-//		ReplicationProtocolPlaceholder rep = new ReplicationProtocolPlaceholder();
-//		CrashFaultReliableBroadcastProtocol bcast = new CrashFaultReliableBroadcastProtocol();
-        //To simplify lets use this protocol again
-//		StaticMembershipProtocol smp = new StaticMembershipProtocol();
-//		babel.registerProtocol(dlm);
-//		babel.registerProtocol(rep);
-//		babel.registerProtocol(bcast);
-//		babel.registerProtocol(smp);
-//		dlm.init(props);
-//		rep.init(props);
-//		bcast.init(props);
-//		smp.init(props);
     }
 
     private static String getAddress(String inter) throws SocketException {
