@@ -6,9 +6,19 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.*;
+import java.security.InvalidKeyException;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.SecureRandom;
+import java.security.SignatureException;
+import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -16,35 +26,42 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.Base64;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 
-import messages.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.codahale.shamir.Scheme;
 
 import Writer.timers.ExpiredOperation;
+import messages.Delete;
+import messages.DeleteAcknowledge;
+import messages.HelloPublicKey;
+import messages.ListReply;
+import messages.ListRequest;
+import messages.Metadata;
+import messages.Read;
+import messages.ReadData;
+import messages.ReadMetadata;
+import messages.Write;
+import messages.WriteAcknowledge;
+import messages.WriteMetadata;
+import messages.WriteMetadataAcknowledge;
 import pt.unl.fct.di.novasys.babel.core.GenericProtocol;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
-import pt.unl.fct.di.novasys.babel.generic.ProtoMessage;
 import pt.unl.fct.di.novasys.babel.generic.signed.InvalidSerializerException;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedProtoMessage;
-import pt.unl.fct.di.novasys.channel.ChannelEvent;
 import pt.unl.fct.di.novasys.channel.simpleclientserver.SimpleClientChannel;
 import pt.unl.fct.di.novasys.channel.simpleclientserver.events.ServerUpEvent;
-import pt.unl.fct.di.novasys.channel.tcp.events.OutConnectionDown;
-import pt.unl.fct.di.novasys.channel.tcp.events.OutConnectionFailed;
-import pt.unl.fct.di.novasys.channel.tcp.events.OutConnectionUp;
 import pt.unl.fct.di.novasys.network.data.Host;
 import utils.Crypto;
 import utils.SignaturesHelper;
 
 public class Writer extends GenericProtocol {
+
     public static final String PROTO_NAME = "BestEffortBroadcast";
     public static final short PROTO_ID = 1001;
 
@@ -120,6 +137,20 @@ public class Writer extends GenericProtocol {
             this.filename = filename;
             this.requestID = requestID;
             this.quorum = quorum;
+        }
+    }
+
+    public static class ListPendingResponse {
+
+        public final String searchPattern;
+        public final UUID requestID;
+        public final List<String> aggregatedFiles = new ArrayList<>();
+        public final List<Host> pendingHosts;
+
+        public ListPendingResponse(String searchPattern, UUID requestID, List<Host> pendingHosts) {
+            this.searchPattern = searchPattern;
+            this.requestID = requestID;
+            this.pendingHosts = pendingHosts;
         }
     }
 
@@ -267,7 +298,6 @@ public class Writer extends GenericProtocol {
 
     }
 
-
     private void uponServerUp(ServerUpEvent event, int channelId) {
         Host server = event.getServer();
         System.out.println("[WRITER] Connection UP to " + server + " on channel " + channelId);
@@ -287,17 +317,11 @@ public class Writer extends GenericProtocol {
 
     public void uploadFile(String filename) {
 
-//        for (int i = 0; i < servers.size(); i++) {
-//            HelloPublicKey msg = new HelloPublicKey(mySelf, myPublicKey);
-//            System.out.println("A enviar as mensagens");
-//            sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
-//        }
-
         if (filename == null || filename.isEmpty()) {
             System.out.println("Usage: UPLOAD <filename>");
             return;
         }
-
+        
         logger.info("[WRITER] Upload requested for file: " + filename);
         System.out.println("[WRITER] Uploading file: " + filename);
 
@@ -471,6 +495,11 @@ public class Writer extends GenericProtocol {
             return;
         }
 
+        if (!wAck.isSuccess()) {
+            System.out.println("[WRITER] WriteAck do host:  " + host + " deu erro: " + wAck.getMessage());
+            return;
+        }
+
         synchronized (serversAux) {
             serversAux.remove(host);
         }
@@ -523,7 +552,6 @@ public class Writer extends GenericProtocol {
                             String keyShareB64 = parts[5];
 
                             // Encrypt metadata
-
                             // 5. ENVIAR PARA SERVIDOR
                             WriteMetadata metadataMsg = new WriteMetadata(
                                     filename, version, metadataBytes, fileHashDecored, metadataRequestID);
@@ -577,6 +605,11 @@ public class Writer extends GenericProtocol {
         if (serversAux == null) {
             this.setIsDoingOp(false);
             System.out.println("[WRITER] WriteMetadataAck for unknown/cleared request: " + writeMAck.getRequestID());
+            return;
+        }
+
+        if (!writeMAck.isSuccess()) {
+            System.out.println("[WRITER] WriteMAck do host:  " + host + " deu erro: " + writeMAck.getMessage());
             return;
         }
 
@@ -645,6 +678,11 @@ public class Writer extends GenericProtocol {
             System.out.println("[READ] Erro ao confirmar node detentor do ficheiro");
         }
 
+        if (!msg.getSuccess()) {
+            System.out.println("[WRITER] Metadata do host:  " + from + " deu erro: " + msg.getMessage());
+            return;
+        }
+
         if (pr.metadataResponses.size() >= pr.quorum && pr.selectedVersion == null) {
 
             Metadata newest = pr.metadataResponses
@@ -682,6 +720,11 @@ public class Writer extends GenericProtocol {
 
         PendingRead pr = pendingReads.get(msg.getRequestID());
         if (pr == null) {
+            return;
+        }
+
+        if (!msg.getSuccess()) {
+            System.out.println("[WRITER] Read do host:  " + from + " deu erro: " + msg.getMessage());
             return;
         }
 
@@ -732,8 +775,6 @@ public class Writer extends GenericProtocol {
             Files.write(out, plaintext);
             System.out.println("[READ] File downloaded successfully: " + out.toString());
 
-
-
         } catch (Exception e) {
             e.printStackTrace();
             System.out.println("[READ] Failed to reconstruct file.");
@@ -783,20 +824,25 @@ public class Writer extends GenericProtocol {
         System.out.println("[WRITER] Delete request sent for: " + filename);
     }
 
-    private void uponReceiveDeleteAck(DeleteAcknowledge ack, Host host, short i, int i1) {
-            List<Host> serversAux = pendingDeleteAcks.get(ack.getRequestID());
+    private void uponReceiveDeleteAck(DeleteAcknowledge ack, Host from, short i, int i1) {
+        List<Host> serversAux = pendingDeleteAcks.get(ack.getRequestID());
 
         if (serversAux == null) {
             System.out.println("[WRITER] DeleteAck for unknown/cleared request: " + ack.getRequestID());
             return;
         }
 
+        if (!ack.isSuccess()) {
+            System.out.println("[WRITER] Delete do host:  " + from + " deu erro: " + ack.getMessage());
+            return;
+        }
+
         synchronized (serversAux) {
-            serversAux.remove(host);
+            serversAux.remove(from);
         }
 
         int remaining = serversAux.size();
-        System.out.println("[WRITER] DELETE ACK from " + host + ", remaining: " + remaining + "/" + servers.size());
+        System.out.println("[WRITER] DELETE ACK from " + from + ", remaining: " + remaining + "/" + servers.size());
 
         if (remaining <= f) {
             System.out.println("[WRITER] Delete quorum reached for file: " + ack.getFilename());
@@ -888,7 +934,6 @@ public class Writer extends GenericProtocol {
         }
     }
 
-
     private void clearTimeout() {
         if (timeoutTimerID != -1) {
             cancelTimer(timeoutTimerID);
@@ -933,33 +978,6 @@ public class Writer extends GenericProtocol {
         cipher.init(Cipher.DECRYPT_MODE, key);
         return cipher.doFinal(encrypted);
     }
-
-
-//    public static class ListPendingResponse {
-//        public final String searchPattern;
-//        public final UUID requestID;
-//        public List<String> aggregatedFiles = new ArrayList<>();
-//        public int responsesReceived = 0;
-//
-//        public ListPendingResponse(String searchPattern, UUID requestID) {
-//            this.searchPattern = searchPattern;
-//            this.requestID = requestID;
-//        }
-//    }
-
-    public static class ListPendingResponse {
-        public final String searchPattern;
-        public final UUID requestID;
-        public final List<String> aggregatedFiles = new ArrayList<>();
-        public final List<Host> pendingHosts;
-
-        public ListPendingResponse(String searchPattern, UUID requestID, List<Host> pendingHosts) {
-            this.searchPattern = searchPattern;
-            this.requestID = requestID;
-            this.pendingHosts = pendingHosts;
-        }
-    }
-
 
     //Test functions
     public void getResults() {

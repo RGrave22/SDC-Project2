@@ -1,15 +1,16 @@
 package messages;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.util.UUID;
+
 import io.netty.buffer.ByteBuf;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedMessageSerializer;
 import pt.unl.fct.di.novasys.babel.generic.signed.SignedProtoMessage;
 import pt.unl.fct.di.novasys.network.data.Host;
 
-import java.io.IOException;
-import java.net.InetAddress;
-import java.util.UUID;
-
 public class WriteMetadataAcknowledge extends SignedProtoMessage {
+
     public final static short MESSAGE_ID = 704;
 
     private final String filename;
@@ -20,20 +21,24 @@ public class WriteMetadataAcknowledge extends SignedProtoMessage {
 
     private final UUID requestID;
 
-    public WriteMetadataAcknowledge(String filename,  boolean success, Host server) {
+    private final String message;
+
+    public WriteMetadataAcknowledge(String filename, boolean success, Host server, String message) {
         super(MESSAGE_ID);
         this.filename = filename;
         this.success = success;
         this.server = server;
         this.requestID = UUID.randomUUID();
+        this.message = message;
     }
 
-    public WriteMetadataAcknowledge(String filename,  boolean success, Host server, UUID requestID) {
+    public WriteMetadataAcknowledge(String filename, boolean success, Host server, UUID requestID, String message) {
         super(MESSAGE_ID);
         this.filename = filename;
         this.success = success;
         this.server = server;
         this.requestID = requestID;
+        this.message = message;
     }
 
     public UUID getRequestID() {
@@ -52,60 +57,75 @@ public class WriteMetadataAcknowledge extends SignedProtoMessage {
         return server;
     }
 
-    public static final SignedMessageSerializer<WriteMetadataAcknowledge> serializer =
-            new SignedMessageSerializer<WriteMetadataAcknowledge>() {
+    public String getMessage() {
+        return message;
+    }
 
-                @Override
-                public void serializeBody(WriteMetadataAcknowledge msg, ByteBuf out) throws IOException {
-                    // Filename
-                    byte[] filenameBytes = msg.filename.getBytes();
-                    out.writeInt(filenameBytes.length);
-                    out.writeBytes(filenameBytes);
+    public static final SignedMessageSerializer<WriteMetadataAcknowledge> serializer
+            = new SignedMessageSerializer<WriteMetadataAcknowledge>() {
 
-                    //ReqId
-                    out.writeLong(msg.requestID.getMostSignificantBits());
-                    out.writeLong(msg.requestID.getLeastSignificantBits());
+        @Override
+        public void serializeBody(WriteMetadataAcknowledge msg, ByteBuf out) throws IOException {
+            // Filename
+            byte[] filenameBytes = msg.filename.getBytes();
+            out.writeInt(filenameBytes.length);
+            out.writeBytes(filenameBytes);
 
-                    // Success
-                    out.writeBoolean(msg.success);
+            //ReqId
+            out.writeLong(msg.requestID.getMostSignificantBits());
+            out.writeLong(msg.requestID.getLeastSignificantBits());
 
-                    // Host (server)
-                    byte[] addressBytes = msg.server.getAddress().getAddress();
-                    out.writeInt(addressBytes.length);
-                    out.writeBytes(addressBytes);
+            // Success
+            out.writeBoolean(msg.success);
 
-                    // Serializa a porta
-                    out.writeShort(msg.server.getPort());
-                }
+            // Host (server)
+            byte[] addressBytes = msg.server.getAddress().getAddress();
+            out.writeInt(addressBytes.length);
+            out.writeBytes(addressBytes);
 
-                @Override
-                public WriteMetadataAcknowledge deserializeBody(ByteBuf in) throws IOException {
-                    // Filename
-                    int len = in.readInt();
-                    byte[] buffer = new byte[len];
-                    in.readBytes(buffer);
-                    String filename = new String(buffer);
+            // Serializa a porta
+            out.writeShort(msg.server.getPort());
 
-                    // ReqId
-                    UUID rID = new UUID(in.readLong(), in.readLong());
+            // Message
+            byte[] msgBytes = msg.message.getBytes();
+            out.writeInt(msgBytes.length);
+            out.writeBytes(msgBytes);
+        }
 
-                    // Success
-                    boolean success = in.readBoolean();
+        @Override
+        public WriteMetadataAcknowledge deserializeBody(ByteBuf in) throws IOException {
+            // Filename
+            int len = in.readInt();
+            byte[] buffer = new byte[len];
+            in.readBytes(buffer);
+            String filename = new String(buffer);
 
-                    // Host (server)
-                    len = in.readInt();
-                    byte[] addressBytes = new byte[len];
-                    in.readBytes(addressBytes);
-                    InetAddress address = InetAddress.getByAddress(addressBytes);
+            // ReqId
+            UUID rID = new UUID(in.readLong(), in.readLong());
 
-                    // Desserializa a porta
-                    short port = in.readShort();
+            // Success
+            boolean success = in.readBoolean();
 
-                    Host server = new Host(address, port);
+            // Host (server)
+            len = in.readInt();
+            byte[] addressBytes = new byte[len];
+            in.readBytes(addressBytes);
+            InetAddress address = InetAddress.getByAddress(addressBytes);
 
-                    return new WriteMetadataAcknowledge(filename, success, server, rID);
-                }
-            };
+            // Desserializa a porta
+            short port = in.readShort();
+
+            Host server = new Host(address, port);
+
+            // Message
+            len = in.readInt();
+            byte[] msgBytes = new byte[len];
+            in.readBytes(msgBytes);
+            String message = new String(msgBytes);
+
+            return new WriteMetadataAcknowledge(filename, success, server, rID, message);
+        }
+    };
 
     @Override
     public SignedMessageSerializer<? extends SignedProtoMessage> getSerializer() {

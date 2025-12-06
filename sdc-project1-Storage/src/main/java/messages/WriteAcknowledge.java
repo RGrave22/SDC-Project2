@@ -21,13 +21,16 @@ public class WriteAcknowledge extends SignedProtoMessage {
 
     private final UUID requestID;
 
-    public WriteAcknowledge(String filename, UUID requestID, boolean success, Host server) {
+    private final String message;
+
+    public WriteAcknowledge(String filename, UUID requestID, boolean success, Host server, String message) {
         super(MESSAGE_ID);
 
         this.filename = filename;
         this.success = success;
         this.server = server;
         this.requestID = requestID;
+        this.message = message;
     }
 
     public String getFilename() {
@@ -44,6 +47,10 @@ public class WriteAcknowledge extends SignedProtoMessage {
 
     public Host getServer() {
         return server;
+    }
+
+    public String getMessage() {
+        return message;
     }
 
     public static final SignedMessageSerializer<WriteAcknowledge> serializer
@@ -68,8 +75,13 @@ public class WriteAcknowledge extends SignedProtoMessage {
             out.writeInt(addressBytes.length);
             out.writeBytes(addressBytes);
 
-            // Serializa a porta
+            // Porta
             out.writeShort(msg.server.getPort());
+
+            // Message
+            byte[] msgBytes = msg.message.getBytes();
+            out.writeInt(msgBytes.length);
+            out.writeBytes(msgBytes);
         }
 
         @Override
@@ -92,12 +104,16 @@ public class WriteAcknowledge extends SignedProtoMessage {
             in.readBytes(addressBytes);
             InetAddress address = InetAddress.getByAddress(addressBytes);
 
-            // Desserializa a porta
             short port = in.readShort();
-
             Host server = new Host(address, port);
 
-            return new WriteAcknowledge(filename, rID, success, server);
+            // Message
+            len = in.readInt();
+            byte[] msgBytes = new byte[len];
+            in.readBytes(msgBytes);
+            String message = new String(msgBytes);
+
+            return new WriteAcknowledge(filename, rID, success, server, message);
         }
     };
 

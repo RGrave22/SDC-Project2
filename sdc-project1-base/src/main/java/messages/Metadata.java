@@ -20,10 +20,12 @@ public class Metadata extends SignedProtoMessage {
     private final UUID requestID;
     private final String identifier;
     private final byte[] signature;
+    private final boolean success;
+    private final String message;
 
     public Metadata(String filename, int version, String fileHash,
             int shareIndex, byte[] keyShare, UUID requestID,
-            String identifier, byte[] signature) {
+            String identifier, byte[] signature, boolean success, String message) {
         super(MESSAGE_ID);
         this.filename = filename;
         this.version = version;
@@ -33,6 +35,8 @@ public class Metadata extends SignedProtoMessage {
         this.requestID = requestID;
         this.identifier = identifier;
         this.signature = signature;
+        this.success = success;
+        this.message = message;
     }
 
     public String getIdentifier() {
@@ -67,18 +71,26 @@ public class Metadata extends SignedProtoMessage {
         return requestID;
     }
 
+    public boolean getSuccess() {
+        return success;
+    }
+
+    public String getMessage() {
+        return message;
+    }
+
     public static final SignedMessageSerializer<Metadata> serializer = new SignedMessageSerializer<Metadata>() {
 
         @Override
         public void serializeBody(Metadata msg, ByteBuf out) throws IOException {
             // filename
-            byte[] f = msg.filename.getBytes();
+            byte[] f = msg.filename.getBytes(StandardCharsets.UTF_8);
             out.writeInt(f.length);
             out.writeBytes(f);
 
             out.writeInt(msg.version);
 
-            byte[] hash = msg.fileHash.getBytes();
+            byte[] hash = msg.fileHash.getBytes(StandardCharsets.UTF_8);
             out.writeInt(hash.length);
             out.writeBytes(hash);
 
@@ -98,6 +110,13 @@ public class Metadata extends SignedProtoMessage {
 
             out.writeInt(msg.signature.length);
             out.writeBytes(msg.signature);
+
+            out.writeBoolean(msg.success);
+
+            // Message
+            byte[] msgBytes = msg.message.getBytes();
+            out.writeInt(msgBytes.length);
+            out.writeBytes(msgBytes);
         }
 
         @Override
@@ -133,7 +152,16 @@ public class Metadata extends SignedProtoMessage {
             byte[] signature = new byte[len];
             in.readBytes(signature);
 
-            return new Metadata(filename, version, fileHash, shareIndex, keyShare, req, identifier, signature);
+            boolean success = in.readBoolean();
+
+            // Message
+            len = in.readInt();
+            byte[] msgBytes = new byte[len];
+            in.readBytes(msgBytes);
+            String message = new String(msgBytes);
+
+            return new Metadata(filename, version, fileHash, shareIndex, keyShare,
+                    req, identifier, signature, success, message);
         }
 
     };

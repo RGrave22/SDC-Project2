@@ -10,7 +10,6 @@ import java.nio.file.Paths;
 import java.security.*;
 import java.security.cert.CertificateException;
 import java.util.*;
-import java.util.List;
 
 import messages.*;
 import org.apache.logging.log4j.LogManager;
@@ -154,7 +153,6 @@ public class Storage extends GenericProtocol {
         publicKeys.put(host, msg.getPublicKey());
     }
 
-
     // Write
     private void uponReceiveWriteMessage(Write write, Host host, short sourceProto, int channelID) {
         System.out.println("Received request to upload file: " + write.getFilename());
@@ -162,12 +160,13 @@ public class Storage extends GenericProtocol {
         try {
 
             if (!write.checkSignature(publicKeys.get(host))) {
-                logger.error("Unauthenticated client");
+                logger.error("Unauthorized client");
                 WriteAcknowledge wAck = new WriteAcknowledge(
                         write.getFilename(),
                         write.getRequestID(),
                         false,
-                        this.mySelf);
+                        this.mySelf,
+                        "Unauthorized client");
                 sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
                 return;
             }
@@ -183,7 +182,6 @@ public class Storage extends GenericProtocol {
                 return;
             }
 
-
             Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
             Files.createDirectories(fileDir);
 
@@ -196,7 +194,8 @@ public class Storage extends GenericProtocol {
                         write.getFilename(),
                         write.getRequestID(),
                         false,
-                        this.mySelf);
+                        this.mySelf,
+                        "Incorrect version");
                 sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
                 return;
             }
@@ -211,7 +210,7 @@ public class Storage extends GenericProtocol {
                     write.getFilename(),
                     write.getRequestID(),
                     true,
-                    this.mySelf);
+                    this.mySelf, "");
             sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
 
             filesAuthors.put(filename, host);
@@ -223,7 +222,8 @@ public class Storage extends GenericProtocol {
                     write.getFilename(),
                     write.getRequestID(),
                     false,
-                    this.mySelf);
+                    this.mySelf,
+                    "Erro desconhecido");
             sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -261,12 +261,13 @@ public class Storage extends GenericProtocol {
         try {
 
             if (!writeM.checkSignature(publicKeys.get(host))) {
-                logger.error("Unauthenticated client");
+                logger.error("Unauthorized client");
                 WriteMetadataAcknowledge wAck = new WriteMetadataAcknowledge(
                         writeM.getFilename(),
                         false,
                         this.mySelf,
-                        writeM.getRequestID());
+                        writeM.getRequestID(),
+                        "Unauthorized client");
                 sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
                 return;
             }
@@ -279,7 +280,8 @@ public class Storage extends GenericProtocol {
             if (!Files.exists(fileDir)) {
                 System.err.println("Directory: " + fileDir + "doesn't exist");
                 WriteMetadataAcknowledge nack = new WriteMetadataAcknowledge(
-                        filename, false, mySelf, writeM.getRequestID());
+                        filename, false, mySelf, writeM.getRequestID(),
+                        "Directory doesn't exist");
                 sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
                 return;
             }
@@ -290,14 +292,14 @@ public class Storage extends GenericProtocol {
             System.out.println("Metadata changed (size: " + metadataBytes.length + " bytes)");
 
             WriteMetadataAcknowledge ack = new WriteMetadataAcknowledge(
-                    filename, true, mySelf, writeM.getRequestID());
+                    filename, true, mySelf, writeM.getRequestID(), "");
             sendMessage(channelID, ack, APP_CLIENT_WRITER, host, 0);
 
         } catch (IOException e) {
             System.err.println("Error processing WriteMetadata: " + e.getMessage());
 
             WriteMetadataAcknowledge nack = new WriteMetadataAcknowledge(
-                    writeM.getFilename(), false, mySelf, writeM.getRequestID());
+                    writeM.getFilename(), false, mySelf, writeM.getRequestID(), "Erro desconhecido");
             sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
@@ -318,7 +320,19 @@ public class Storage extends GenericProtocol {
         try {
 
             if (!readM.checkSignature(publicKeys.get(host))) {
-                logger.error("Unauthenticated client");
+                logger.error("Unauthorized client");
+                Metadata metaMsg = new Metadata(
+                        readM.getFilename(),
+                        0,
+                        "",
+                        0,
+                        null,
+                        readM.getRequestID(),
+                        "",
+                        null,
+                        false,
+                        "Unauthorized client");
+                sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
                 return;
             }
 
@@ -327,12 +341,36 @@ public class Storage extends GenericProtocol {
 
             if (!Files.exists(fileDir)) {
                 System.err.println("File directory does not exist: " + fileDir);
+                Metadata metaMsg = new Metadata(
+                        readM.getFilename(),
+                        0,
+                        "",
+                        0,
+                        null,
+                        null,
+                        "",
+                        null,
+                        false,
+                        "File directory does not exist");
+                sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
                 return;
             }
 
             Path metadataFile = fileDir.resolve("metadata");
             if (!Files.exists(metadataFile)) {
                 System.err.println("Metadata file not found for " + filename);
+                Metadata metaMsg = new Metadata(
+                        readM.getFilename(),
+                        0,
+                        "",
+                        0,
+                        null,
+                        null,
+                        "",
+                        null,
+                        false,
+                        "Metadata file not found");
+                sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
                 return;
             }
 
@@ -340,6 +378,18 @@ public class Storage extends GenericProtocol {
             String[] parts = new String(metadataBytes, StandardCharsets.UTF_8).split("\\|");
             if (parts.length != 6) {
                 System.err.println("Metadata format invalid for " + filename);
+                Metadata metaMsg = new Metadata(
+                        readM.getFilename(),
+                        0,
+                        "",
+                        0,
+                        null,
+                        null,
+                        "",
+                        null,
+                        false,
+                        "Metadata format invalid");
+                sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
                 return;
             }
 
@@ -358,13 +408,27 @@ public class Storage extends GenericProtocol {
                     keyShare,
                     readM.getRequestID(),
                     identifier,
-                    sign);
+                    sign,
+                    true,
+                    "");
 
             sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
             System.out.println("Sent Metadata for " + filename + " to " + host);
 
         } catch (IOException e) {
             System.err.println("Error reading metadata: " + e.getMessage());
+            Metadata metaMsg = new Metadata(
+                    readM.getFilename(),
+                    0,
+                    "",
+                    0,
+                    null,
+                    null,
+                    "",
+                    null,
+                    false,
+                    e.getMessage());
+            sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -374,27 +438,34 @@ public class Storage extends GenericProtocol {
         System.out.println("Received Read for file: " + read.getFilename());
         try {
 
+            String filename = read.getFilename();
+            int requestedVersion = read.getVersion();
+
             if (!read.checkSignature(publicKeys.get(host))) {
-                logger.error("Unauthenticated client");
+                logger.error("Unauthorized client");
+                ReadData dataMsg = new ReadData(filename, requestedVersion, null, read.getRequestID(), false, "Unauthorized client");
+                sendMessage(channelID, dataMsg, APP_CLIENT_WRITER, host, 0);
                 return;
             }
 
-            String filename = read.getFilename();
-            int requestedVersion = read.getVersion();
             Path valueFile = Paths.get(mySelf.getPort() + "-storage/" + filename, "value-" + requestedVersion);
 
             if (!Files.exists(valueFile)) {
                 System.err.println("Value file does not exist: " + valueFile);
+                ReadData dataMsg = new ReadData(filename, requestedVersion, null, read.getRequestID(), false, "Value file does not exist");
+                sendMessage(channelID, dataMsg, APP_CLIENT_WRITER, host, 0);
                 return;
             }
 
             byte[] encryptedFile = Files.readAllBytes(valueFile);
-            ReadData dataMsg = new ReadData(filename, requestedVersion, encryptedFile, read.getRequestID());
+            ReadData dataMsg = new ReadData(filename, requestedVersion, encryptedFile, read.getRequestID(), true, "");
             sendMessage(channelID, dataMsg, APP_CLIENT_WRITER, host, 0);
 
             System.out.println("Sent ReadData for " + filename + " to " + host);
         } catch (IOException e) {
             System.err.println("Error reading file: " + e.getMessage());
+            ReadData dataMsg = new ReadData(read.getFilename(), 0, null, read.getRequestID(), false, e.getMessage());
+            sendMessage(channelID, dataMsg, APP_CLIENT_WRITER, host, 0);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -407,11 +478,12 @@ public class Storage extends GenericProtocol {
         try {
 
             if (!delete.checkSignature(publicKeys.get(host))) {
-                logger.error("Unauthenticated client");
+                logger.error("Unauthorized client");
                 DeleteAcknowledge nack = new DeleteAcknowledge(
                         delete.getFilename(),
                         delete.getRequestID(),
-                        false
+                        false,
+                        "Unauthorized client"
                 );
                 sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
                 return;
@@ -426,7 +498,8 @@ public class Storage extends GenericProtocol {
                 DeleteAcknowledge nack = new DeleteAcknowledge(
                         filename,
                         delete.getRequestID(),
-                        false
+                        false,
+                        "Delete rejected: client is not the file author"
                 );
                 sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
                 return;
@@ -444,7 +517,8 @@ public class Storage extends GenericProtocol {
             DeleteAcknowledge ack = new DeleteAcknowledge(
                     filename,
                     delete.getRequestID(),
-                    success
+                    success,
+                    "Error trying to delete file"
             );
             sendMessage(channelID, ack, APP_CLIENT_WRITER, host, 0);
 
@@ -463,7 +537,7 @@ public class Storage extends GenericProtocol {
         try {
 
             if (!listReq.checkSignature(publicKeys.get(host))) {
-                logger.error("Unauthenticated client");
+                logger.error("Unauthorized client");
                 return;
             }
 
@@ -511,7 +585,7 @@ public class Storage extends GenericProtocol {
         }
     }
 
-
+    //Aux function to delete the file directory
     private boolean deleteDirectory(Path directory) {
         try {
             if (!Files.exists(directory)) {
@@ -536,6 +610,5 @@ public class Storage extends GenericProtocol {
             return false;
         }
     }
-
 
 }

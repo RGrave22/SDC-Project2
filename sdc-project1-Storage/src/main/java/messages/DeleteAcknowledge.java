@@ -14,19 +14,22 @@ public class DeleteAcknowledge extends SignedProtoMessage {
     private final String filename;
     private final UUID requestID;
     private final boolean success;
+    private final String message;
 
-    public DeleteAcknowledge(String filename, boolean success){
+    public DeleteAcknowledge(String filename, boolean success, String message) {
         super(MESSAGE_ID);
         this.filename = filename;
         this.requestID = UUID.randomUUID();
         this.success = success;
+        this.message = message;
     }
 
-    public DeleteAcknowledge(String filename, UUID requestID, boolean success) {
+    public DeleteAcknowledge(String filename, UUID requestID, boolean success, String message) {
         super(MESSAGE_ID);
         this.filename = filename;
         this.requestID = requestID;
         this.success = success;
+        this.message = message;
     }
 
     public String getFilename() {
@@ -39,6 +42,10 @@ public class DeleteAcknowledge extends SignedProtoMessage {
 
     public boolean isSuccess() {
         return success;
+    }
+
+    public String getMessage() {
+        return message;
     }
 
     public static final SignedMessageSerializer<DeleteAcknowledge> serializer
@@ -54,6 +61,11 @@ public class DeleteAcknowledge extends SignedProtoMessage {
             out.writeLong(msg.requestID.getLeastSignificantBits());
 
             out.writeBoolean(msg.success);
+
+            // Message
+            byte[] msgBytes = msg.message.getBytes();
+            out.writeInt(msgBytes.length);
+            out.writeBytes(msgBytes);
         }
 
         @Override
@@ -67,7 +79,13 @@ public class DeleteAcknowledge extends SignedProtoMessage {
 
             boolean success = in.readBoolean();
 
-            return new DeleteAcknowledge(filename, requestID, success);
+            // Message
+            len = in.readInt();
+            byte[] msgBytes = new byte[len];
+            in.readBytes(msgBytes);
+            String message = new String(msgBytes);
+
+            return new DeleteAcknowledge(filename, requestID, success, message);
         }
     };
 
