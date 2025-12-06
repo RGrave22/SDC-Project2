@@ -321,7 +321,7 @@ public class Writer extends GenericProtocol {
             System.out.println("Usage: UPLOAD <filename>");
             return;
         }
-        
+
         logger.info("[WRITER] Upload requested for file: " + filename);
         System.out.println("[WRITER] Uploading file: " + filename);
 
@@ -488,7 +488,6 @@ public class Writer extends GenericProtocol {
     private void uponReceiveWriteAck(WriteAcknowledge wAck, Host host, short i, int i1) {
         System.out.println("Epá cheguei tá fixe");
         List<Host> serversAux = pendingAcks.get(wAck.getRequestID());
-        System.out.println("Lista que ainda  tenho: " + serversAux);
 
         if (serversAux == null) {
             System.out.println("[WRITER] WriteAck for unknown/cleared request: " + wAck.getRequestID());
@@ -538,8 +537,7 @@ public class Writer extends GenericProtocol {
                         String metadataContent = new String(metadataBytes, StandardCharsets.UTF_8);
 
                         // MOSTRAR CONTEÚDO
-                        System.out.println("FILE: " + metadataPath.getFileName() + ": " + metadataContent);
-
+                        //System.out.println("FILE: " + metadataPath.getFileName() + ": " + metadataContent);
                         // PARSE (versão|hash|shareIndex|keyShareBase64)
                         String[] parts = metadataContent.split("\\|");
                         if (parts.length == 6) {
@@ -659,8 +657,14 @@ public class Writer extends GenericProtocol {
     // Read
     public void uponReceiveMetadata(Metadata msg, Host from, short source, int chan) {
 
+        if (!msg.getSuccess()) {
+            System.out.println("[WRITER] Metadata do host:  " + from + " deu erro: " + msg.getMessage());
+            return;
+        }
+
         PendingRead pr = pendingReads.get(msg.getRequestID());
         if (pr == null) {
+            System.out.println("Teste alfredo");
             return;
         }
         pr.metadataResponses.put(from, msg);
@@ -676,11 +680,6 @@ public class Writer extends GenericProtocol {
         } catch (KeyStoreException | InvalidKeyException | SignatureException | NoSuchAlgorithmException e) {
             e.printStackTrace();
             System.out.println("[READ] Erro ao confirmar node detentor do ficheiro");
-        }
-
-        if (!msg.getSuccess()) {
-            System.out.println("[WRITER] Metadata do host:  " + from + " deu erro: " + msg.getMessage());
-            return;
         }
 
         if (pr.metadataResponses.size() >= pr.quorum && pr.selectedVersion == null) {
@@ -1002,7 +1001,9 @@ public class Writer extends GenericProtocol {
     }
 
     private long percentile(List<Long> values, int p) {
-        if (values.isEmpty()) return 0;
+        if (values.isEmpty()) {
+            return 0;
+        }
         int idx = (int) Math.ceil(p / 100.0 * values.size()) - 1;
         idx = Math.max(0, Math.min(idx, values.size() - 1));
         return values.get(idx);

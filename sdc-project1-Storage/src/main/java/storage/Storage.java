@@ -326,10 +326,10 @@ public class Storage extends GenericProtocol {
                         0,
                         "",
                         0,
-                        null,
+                        new byte[0],
                         readM.getRequestID(),
                         "",
-                        null,
+                        new byte[0],
                         false,
                         "Unauthorized client");
                 sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
@@ -346,10 +346,10 @@ public class Storage extends GenericProtocol {
                         0,
                         "",
                         0,
-                        null,
-                        null,
+                        new byte[0],
+                        readM.getRequestID(),
                         "",
-                        null,
+                        new byte[0],
                         false,
                         "File directory does not exist");
                 sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
@@ -364,10 +364,10 @@ public class Storage extends GenericProtocol {
                         0,
                         "",
                         0,
-                        null,
-                        null,
+                        new byte[0],
+                        readM.getRequestID(),
                         "",
-                        null,
+                        new byte[0],
                         false,
                         "Metadata file not found");
                 sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
@@ -383,10 +383,10 @@ public class Storage extends GenericProtocol {
                         0,
                         "",
                         0,
-                        null,
-                        null,
+                        new byte[0],
+                        readM.getRequestID(),
                         "",
-                        null,
+                        new byte[0],
                         false,
                         "Metadata format invalid");
                 sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
@@ -422,10 +422,10 @@ public class Storage extends GenericProtocol {
                     0,
                     "",
                     0,
-                    null,
-                    null,
+                    new byte[0],
+                    readM.getRequestID(),
                     "",
-                    null,
+                    new byte[0],
                     false,
                     e.getMessage());
             sendMessage(channelID, metaMsg, APP_CLIENT_WRITER, host, 0);
@@ -443,7 +443,7 @@ public class Storage extends GenericProtocol {
 
             if (!read.checkSignature(publicKeys.get(host))) {
                 logger.error("Unauthorized client");
-                ReadData dataMsg = new ReadData(filename, requestedVersion, null, read.getRequestID(), false, "Unauthorized client");
+                ReadData dataMsg = new ReadData(filename, requestedVersion, new byte[0], read.getRequestID(), false, "Unauthorized client");
                 sendMessage(channelID, dataMsg, APP_CLIENT_WRITER, host, 0);
                 return;
             }
@@ -452,7 +452,7 @@ public class Storage extends GenericProtocol {
 
             if (!Files.exists(valueFile)) {
                 System.err.println("Value file does not exist: " + valueFile);
-                ReadData dataMsg = new ReadData(filename, requestedVersion, null, read.getRequestID(), false, "Value file does not exist");
+                ReadData dataMsg = new ReadData(filename, requestedVersion, new byte[0], read.getRequestID(), false, "Value file does not exist");
                 sendMessage(channelID, dataMsg, APP_CLIENT_WRITER, host, 0);
                 return;
             }
@@ -464,7 +464,7 @@ public class Storage extends GenericProtocol {
             System.out.println("Sent ReadData for " + filename + " to " + host);
         } catch (IOException e) {
             System.err.println("Error reading file: " + e.getMessage());
-            ReadData dataMsg = new ReadData(read.getFilename(), 0, null, read.getRequestID(), false, e.getMessage());
+            ReadData dataMsg = new ReadData(read.getFilename(), 0, new byte[0], read.getRequestID(), false, e.getMessage());
             sendMessage(channelID, dataMsg, APP_CLIENT_WRITER, host, 0);
         } catch (Exception e) {
             throw new RuntimeException(e);
