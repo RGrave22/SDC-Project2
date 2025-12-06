@@ -11,10 +11,12 @@ address 127.0.0.1
 
 # membership.myhost - this one is different for each process and you must provide
 # EMBAIXO - READERS e WRITER
-membership.neighbors 127.0.0.1:5000,127.0.0.1:6000,127.0.0.1:7000,127.0.0.1:8000
+# membership.neighbors 127.0.0.1:5000,127.0.0.1:6000,127.0.0.1:7000,127.0.0.1:8000
+membership.neighbors 172.30.10.106:5000,172.30.10.107:6000,172.30.10.108:7000,172.30.10.115:8000
+
 writer 127.0.0.1:5000
 
-storage.services 127.0.0.1:5100,127.0.0.1:6100,127.0.0.1:7100,127.0.0.1:8100
+storage.services 172.30.10.106:5100,172.30.10.107:6100,172.30.10.108:7100,172.30.10.115:8100
 
 operation_timeout 5000
 
