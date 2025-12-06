@@ -45,7 +45,6 @@ import utils.Crypto;
 import utils.SignaturesHelper;
 
 public class Writer extends GenericProtocol {
-
     public static final String PROTO_NAME = "BestEffortBroadcast";
     public static final short PROTO_ID = 1001;
 
@@ -96,10 +95,14 @@ public class Writer extends GenericProtocol {
     //list
     private Map<UUID, ListPendingResponse> pendingListResponses;
 
-
     private Map<UUID, List<Host>> pendingAcks;
     private Map<UUID, PendingRead> pendingReads;
     public volatile boolean isDoingOp = false;
+
+    //Latency tests
+    private Map<UUID, Long> opStartTimes = new HashMap<>();
+    private List<Long> uploadLatencies = new ArrayList<>();
+    private List<Long> downloadLatencies = new ArrayList<>();
 
     public static class PendingRead {
 
@@ -284,18 +287,22 @@ public class Writer extends GenericProtocol {
 
     public void uploadFile(String filename) {
 
-        for (int i = 0; i < servers.size(); i++) {
-            HelloPublicKey msg = new HelloPublicKey(mySelf, myPublicKey);
-            System.out.println("A enviar as mensagens");
-            sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
-        }
+//        for (int i = 0; i < servers.size(); i++) {
+//            HelloPublicKey msg = new HelloPublicKey(mySelf, myPublicKey);
+//            System.out.println("A enviar as mensagens");
+//            sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
+//        }
 
         if (filename == null || filename.isEmpty()) {
             System.out.println("Usage: UPLOAD <filename>");
             return;
         }
+
         logger.info("[WRITER] Upload requested for file: " + filename);
         System.out.println("[WRITER] Uploading file: " + filename);
+
+        UUID uploadOpId = UUID.randomUUID();
+        opStartTimes.put(uploadOpId, System.nanoTime());
 
         try {
 
@@ -343,7 +350,7 @@ public class Writer extends GenericProtocol {
             // Parte a chave
             Map<Integer, byte[]> keyShares = splitKey(encryptionKey);
 
-            Write msg = new Write(myIdentifier, encryptedFile, filename, filesVersions.get(filename));
+            Write msg = new Write(myIdentifier, encryptedFile, filename, filesVersions.get(filename), uploadOpId);
             List<Host> servers2 = new ArrayList<>(servers);
             pendingAcks.put(msg.getRequestID(), servers2);
 
@@ -399,6 +406,8 @@ public class Writer extends GenericProtocol {
         }
 
         UUID rid = UUID.randomUUID();
+        opStartTimes.put(rid, System.nanoTime());
+
         int quorum = servers.size() - f;
         PendingRead pr = new PendingRead(filename, rid, quorum);
         pendingReads.put(rid, pr);
@@ -481,7 +490,7 @@ public class Writer extends GenericProtocol {
                 System.out.println("Severs: " + servers);
                 // Para cada servidor, envia o metadata correspondente
 
-                UUID metadataRequestID = UUID.randomUUID();
+                UUID metadataRequestID = wAck.getRequestID();
 
                 pendingAcks.remove(wAck.getRequestID());
 
@@ -586,6 +595,14 @@ public class Writer extends GenericProtocol {
             clearTimeout();
             pendingAcks.remove(writeMAck.getRequestID());
             this.setIsDoingOp(false);
+
+            UUID reqId = writeMAck.getRequestID();
+            Long startTime = opStartTimes.remove(reqId);
+            if (startTime != null) {
+                long latencyMs = (System.nanoTime() - startTime) / 1_000_000;
+                uploadLatencies.add(latencyMs);
+                System.out.println("[LATENCY] UPLOAD " + writeMAck.getFilename() + " = " + latencyMs + " ms");
+            }
         }
 
     }
@@ -715,11 +732,21 @@ public class Writer extends GenericProtocol {
             Files.write(out, plaintext);
             System.out.println("[READ] File downloaded successfully: " + out.toString());
 
+
+
         } catch (Exception e) {
             e.printStackTrace();
             System.out.println("[READ] Failed to reconstruct file.");
         }
         pendingReads.remove(pr.requestID);
+
+        Long startTime = opStartTimes.remove(pr.requestID);
+        if (startTime != null) {
+            long latencyMs = (System.nanoTime() - startTime) / 1_000_000;
+            downloadLatencies.add(latencyMs);
+            System.out.println("[LATENCY] DOWNLOAD " + pr.filename + " = " + latencyMs + " ms");
+        }
+
         this.setIsDoingOp(false);
         clearTimeout();
     }
@@ -817,33 +844,6 @@ public class Writer extends GenericProtocol {
         clearTimeout();
         this.timeoutTimerID = setupTimer(new ExpiredOperation(msg.getRequestID(), msg), operation_timeout);
     }
-
-//    private void uponReceiveListReply(ListReply response, Host host, short i, int i1) {
-//            ListPendingResponse pending = pendingListResponses.get(response.getRequestID());
-//
-//        if (pending == null) {
-//            System.out.println("[WRITER] ListResponse for unknown/cleared request: " + response.getRequestID());
-//            return;
-//        }
-//
-//        pending.aggregatedFiles.addAll(response.getFilenames());
-//        pending.responsesReceived++;
-//
-//        System.out.println("[WRITER] Received list response from " + host);
-//        System.out.println("[WRITER] Files found:");
-//
-//        if (pending.aggregatedFiles.isEmpty()) {
-//            System.out.println("  (no files found)");
-//        } else {
-//            for (String filename : pending.aggregatedFiles) {
-//                System.out.println("  - " + filename);
-//            }
-//        }
-//
-//        pendingListResponses.remove(response.getRequestID());
-//        clearTimeout();
-//        this.setIsDoingOp(false);
-//    }
 
     private void uponReceiveListReply(ListReply response, Host host, short i, int i1) {
         ListPendingResponse pending = pendingListResponses.get(response.getRequestID());
@@ -958,6 +958,42 @@ public class Writer extends GenericProtocol {
             this.requestID = requestID;
             this.pendingHosts = pendingHosts;
         }
+    }
+
+
+    //Test functions
+    public void getResults() {
+        System.out.println("\n========== LATENCY STATISTICS ==========");
+        printOne("UPLOAD", uploadLatencies);
+        printOne("DOWNLOAD", downloadLatencies);
+        System.out.println("========================================\n");
+    }
+
+    private void printOne(String name, List<Long> values) {
+        if (values.isEmpty()) {
+            return;
+        }
+        values.sort(Long::compare);
+        double avg = values.stream().mapToLong(Long::longValue).average().orElse(0);
+        long p50 = percentile(values, 50);
+        long p95 = percentile(values, 95);
+        long p99 = percentile(values, 99);
+
+        System.out.printf("%s: avg=%.2f ms, p50=%d ms, p95=%d ms, p99=%d ms (samples=%d)\n",
+                name, avg, p50, p95, p99, values.size());
+    }
+
+    private long percentile(List<Long> values, int p) {
+        if (values.isEmpty()) return 0;
+        int idx = (int) Math.ceil(p / 100.0 * values.size()) - 1;
+        idx = Math.max(0, Math.min(idx, values.size() - 1));
+        return values.get(idx);
+    }
+
+    public void clearLatencyStats() {
+        opStartTimes.clear();
+        uploadLatencies.clear();
+        downloadLatencies.clear();
     }
 
 }

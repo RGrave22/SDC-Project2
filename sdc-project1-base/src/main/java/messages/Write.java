@@ -37,7 +37,7 @@ public class Write extends SignedProtoMessage {
     /**
      * Construtor com requestID específico (desserialização)
      */
-    private Write(String clientID, byte[] encryptedFile, String filename, int version, UUID requestID) {
+    public Write(String clientID, byte[] encryptedFile, String filename, int version, UUID requestID) {
         super(MESSAGE_ID);
         this.clientID = clientID;
         this.requestID = requestID;

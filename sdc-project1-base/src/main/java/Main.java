@@ -5,10 +5,7 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.security.GeneralSecurityException;
-import java.util.Arrays;
-import java.util.Enumeration;
-import java.util.Properties;
-import java.util.Scanner;
+import java.util.*;
 
 import Writer.Writer;
 import pt.unl.fct.di.novasys.babel.core.Babel;
@@ -76,7 +73,6 @@ public class Main {
                         break;
                     case "DOWNLOAD":
                         w.downloadFile(argument);
-
                         break;
                     case "DELETE":
                         w.deleteFile(argument);
@@ -88,12 +84,70 @@ public class Main {
                         System.out.println("Leaving...");
                         System.exit(0);
                         break;
+                    case "TEST":
+                        runTest(Integer.parseInt(argument), w);
+
                     default:
                         System.out.println("Unknown Command: " + command);
                 }
             }
         }
     }
+
+
+    public static void runTest(int numOps, Writer w) {
+        System.out.println("╔════════════════════════════════════════╗");
+        System.out.println("║   TEST: " + numOps + " operations    ║");
+        System.out.println("╚════════════════════════════════════════╝");
+
+        new Thread(() -> {
+            try {
+                Random r = new Random(System.currentTimeMillis());
+
+                List<String> uploadedFiles = new ArrayList<>();
+
+                for (int i = 0; i < numOps; i++) {
+                    while (w.getIdDoingOp()) {
+                        Thread.sleep(100);
+                    }
+
+                    String filename = "test_file_" + r.nextInt(1000);
+                    float val = r.nextFloat();
+
+                    if(val <= 0.2 || uploadedFiles.isEmpty()) {
+                        w.uploadFile(filename);
+                        uploadedFiles.add(filename);
+                    }else if(val<= 0.4){
+                        filename = uploadedFiles.get(r.nextInt(uploadedFiles.size()));
+                        w.uploadFile(filename);
+                    } else {
+                        filename = uploadedFiles.get(r.nextInt(uploadedFiles.size()));
+                        w.downloadFile(filename);
+                    }
+
+                    Thread.sleep(200);
+                }
+
+                while (w.getIdDoingOp()) {
+                    Thread.sleep(100);
+                }
+
+                System.out.println("\n╔════════════════════════════════════════╗");
+                System.out.println("║   TEST COMPLETED                      ║");
+                System.out.println("╚════════════════════════════════════════╝\n");
+
+                w.getResults();
+                w.clearLatencyStats();
+
+                System.out.print("\n> ");
+
+            } catch (Exception e) {
+                System.err.println("[TEST] Error: " + e.getMessage());
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
 
     private static String getAddress(String inter) throws SocketException {
         NetworkInterface byName = NetworkInterface.getByName(inter);

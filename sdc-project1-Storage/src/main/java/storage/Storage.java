@@ -511,7 +511,7 @@ public class Storage extends GenericProtocol {
         }
     }
 
-    //Aux function to delete the file directory
+
     private boolean deleteDirectory(Path directory) {
         try {
             if (!Files.exists(directory)) {
