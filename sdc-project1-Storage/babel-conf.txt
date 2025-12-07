@@ -10,7 +10,7 @@ address 127.0.0.1
 # Static Membership Protocol Configuration
 
 # membership.myhost - this one is different for each process and you must provide
-membership.neighbors 172.30.10.106:5000,172.30.10.107:6000,172.30.10.108:7000,172.30.10.115:8000
+membership.neighbors 127.0.0.1:5000,127.0.0.1:6000,127.0.0.1:7000,127.0.0.1:8000
 
 # Crypto configuration parameters
 

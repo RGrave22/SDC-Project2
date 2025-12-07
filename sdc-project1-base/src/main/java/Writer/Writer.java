@@ -116,6 +116,12 @@ public class Writer extends GenericProtocol {
     private Map<UUID, PendingRead> pendingReads;
     public volatile boolean isDoingOp = false;
 
+    // Máximo de retires por operação
+    private static final int MAX_RETRIES = 2;
+
+    // Contador de retries por requestID
+    private Map<UUID, Integer> retriesCount = new HashMap<>();
+
     //Latency tests
     private Map<UUID, Long> opStartTimes = new HashMap<>();
     private List<Long> uploadLatencies = new ArrayList<>();
@@ -456,32 +462,87 @@ public class Writer extends GenericProtocol {
         }
 
         clearTimeout();
-        this.timeoutTimerID = setupTimer(new ExpiredOperation(rid, null), operation_timeout);
+        this.timeoutTimerID = setupTimer(new ExpiredOperation(rid, msg), operation_timeout);
         this.setIsDoingOp(true);
     }
 
     // Timer
     private void handleExpiredTimer(ExpiredOperation expTimer, long l) {
-
         SignedProtoMessage msg = expTimer.getMessage();
-        UUID reqID = null;
+        UUID reqID = expTimer.getRequestId();
 
-        if (msg instanceof Write) {
-            reqID = ((Write) msg).getRequestID();
-        } else if (msg instanceof WriteMetadata) {
-            reqID = ((WriteMetadata) msg).getRequestID();
+        System.out.println("[TIMEOUT] Request " + reqID + " timed out");
+
+        // Tipos que suportam retry
+        boolean isRetryable = (msg instanceof Write || msg instanceof WriteMetadata
+                || msg instanceof Delete || msg instanceof ListRequest);
+
+        if (!isRetryable) {
+            System.out.println("[TIMEOUT] Message not retryable, aborting timeout handling.");
+            clearTimeout();
+            this.setIsDoingOp(false);
+            return;
         }
 
-        System.out.println("[WRITER] Operation timed out for request " + reqID);
+        int usedRetries = retriesCount.getOrDefault(reqID, 0);
 
-        if (reqID != null) {
-            pendingAcks.remove(reqID);
+        if (usedRetries < MAX_RETRIES) {
+            retriesCount.put(reqID, usedRetries + 1);
+            System.out.println("[RETRY] Retrying message " + reqID
+                    + " (" + (usedRetries + 1) + "/" + MAX_RETRIES + ")");
+            retrieProccess(msg);
+
+            clearTimeout();
+            this.timeoutTimerID = setupTimer(new ExpiredOperation(reqID, msg), operation_timeout);
+            return;
         }
+
+        System.out.println("[ABORT] Max retries reached for request " + reqID);
+
+        // Limpeza geral
+        retriesCount.remove(reqID);
+        pendingAcks.remove(reqID);
+        pendingDeleteAcks.remove(reqID);
+        pendingListResponses.remove(reqID);
 
         clearTimeout();
         this.setIsDoingOp(false);
-
         System.out.println("[WRITER] Operation aborted. You can type commands again.");
+    }
+
+    private void retrieProccess(SignedProtoMessage msg) {
+
+        System.out.println("[RETRY] Retrying message of type: " + msg.getClass().getSimpleName());
+
+        if (msg instanceof Write writeMsg) {
+            for (int i = 0; i < servers.size(); i++) {
+                sendMessage(hostChannels[i], writeMsg, APP_SERVER_PROTO, servers.get(i), 0);
+            }
+            return;
+        }
+
+        if (msg instanceof WriteMetadata metaMsg) {
+            for (int i = 0; i < servers.size(); i++) {
+                sendMessage(hostChannels[i], metaMsg, APP_SERVER_PROTO, servers.get(i), 0);
+            }
+            return;
+        }
+
+        if (msg instanceof Delete delMsg) {
+            for (int i = 0; i < servers.size(); i++) {
+                sendMessage(hostChannels[i], delMsg, APP_SERVER_PROTO, servers.get(i), 0);
+            }
+            return;
+        }
+
+        if (msg instanceof ListRequest listMsg) {
+            for (int i = 0; i < servers.size(); i++) {
+                sendMessage(hostChannels[i], listMsg, APP_SERVER_PROTO, servers.get(i), 0);
+            }
+            return;
+        }
+
+        System.out.println("[RETRY] Message type not eligible for retry.");
     }
 
     // Writer
@@ -525,6 +586,9 @@ public class Writer extends GenericProtocol {
                 List<Host> serversForMeta = new ArrayList<>(servers);
                 pendingAcks.put(metadataRequestID, new ArrayList<>(serversForMeta));
 
+                WriteMetadata metadataMsg = new WriteMetadata(
+                        "", 0, new byte[0], new byte[0], metadataRequestID);
+
                 for (int j = 0; j < servers.size(); j++) {
                     Path metadataPath = Paths.get(UPLOAD_DIR + "-" + myIdentifier, j + "-metadata-" + filename);
                     System.out.println("PATH: " + metadataPath);
@@ -551,7 +615,7 @@ public class Writer extends GenericProtocol {
 
                             // Encrypt metadata
                             // 5. ENVIAR PARA SERVIDOR
-                            WriteMetadata metadataMsg = new WriteMetadata(
+                            metadataMsg = new WriteMetadata(
                                     filename, version, metadataBytes, fileHashDecored, metadataRequestID);
                             metadataMsg.signMessage(myPrivateKey);
                             sendMessage(hostChannels[j], metadataMsg, APP_SERVER_PROTO, servers.get(j), 0);
@@ -574,7 +638,7 @@ public class Writer extends GenericProtocol {
                 clearTimeout();
                 // Nota: aqui não temos a mensagem concreta, mas passamos um ExpiredOperation
                 // com apenas o ID
-                this.timeoutTimerID = setupTimer(new ExpiredOperation(metadataRequestID, null), operation_timeout);
+                this.timeoutTimerID = setupTimer(new ExpiredOperation(metadataRequestID, metadataMsg), operation_timeout);
                 this.setIsDoingOp(true);
 
             } catch (IOException e) {
@@ -623,12 +687,13 @@ public class Writer extends GenericProtocol {
             String filename = writeMAck.getFilename();
             cleanupMetadataFiles(filename);
             System.out.println("[WRITER] Quorum of metadata reached! Can proceed");
+            UUID reqID = writeMAck.getRequestID();
             clearTimeout();
-            pendingAcks.remove(writeMAck.getRequestID());
+            pendingAcks.remove(reqID);
             this.setIsDoingOp(false);
+            retriesCount.remove(reqID);
 
-            UUID reqId = writeMAck.getRequestID();
-            Long startTime = opStartTimes.remove(reqId);
+            Long startTime = opStartTimes.remove(reqID);
             if (startTime != null) {
                 long latencyMs = (System.nanoTime() - startTime) / 1_000_000;
                 uploadLatencies.add(latencyMs);
@@ -787,6 +852,7 @@ public class Writer extends GenericProtocol {
             System.out.println("[LATENCY] DOWNLOAD " + pr.filename + " = " + latencyMs + " ms");
         }
 
+        retriesCount.remove(pr.requestID);
         this.setIsDoingOp(false);
         clearTimeout();
     }
@@ -849,7 +915,10 @@ public class Writer extends GenericProtocol {
             // Remove from versions map
             filesVersions.remove(ack.getFilename());
 
-            pendingDeleteAcks.remove(ack.getRequestID());
+            UUID reqID = ack.getRequestID();
+
+            pendingDeleteAcks.remove(reqID);
+            retriesCount.remove(reqID);
             clearTimeout();
             this.setIsDoingOp(false);
 
@@ -925,7 +994,10 @@ public class Writer extends GenericProtocol {
                 }
             }
 
-            pendingListResponses.remove(response.getRequestID());
+            UUID reqID = response.getRequestID();
+
+            pendingListResponses.remove(reqID);
+            retriesCount.remove(reqID);
             clearTimeout();
             this.setIsDoingOp(false);
 

@@ -21,6 +21,10 @@ public class ExpiredOperation extends ProtoTimer {
         return message;
     }
 
+    public UUID getRequestId() {
+        return req;
+    }
+
     @Override
     public ProtoTimer clone() {
         return this;
