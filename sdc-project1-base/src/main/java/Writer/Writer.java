@@ -25,6 +25,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Random;
 import java.util.UUID;
 
 import javax.crypto.Cipher;
@@ -229,7 +230,7 @@ public class Writer extends GenericProtocol {
             }
 
             // PARA VERIFICAR SE A KEY ESTA CERTA
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(myPublicKey.getEncoded());
             StringBuilder hex = new StringBuilder();
             for (byte b : hash) {
@@ -296,7 +297,7 @@ public class Writer extends GenericProtocol {
 
             openConnection(servers.get(i), hostChannels[i]);
             System.out.println(
-                    "[WRITER] Estamos a abrir um canal entre: " + servers.get(i).toString() + ": " + channelID);
+                    "[WRITER] Estamos a abrir um canal entre: " + servers.get(i).toString() + ": " + hostChannels[i]);
 
         }
 
@@ -328,8 +329,7 @@ public class Writer extends GenericProtocol {
             return;
         }
 
-        logger.info("[WRITER] Upload requested for file: " + filename);
-        System.out.println("[WRITER] Uploading file: " + filename);
+        System.out.println("[WRITER] Starting the upload of file: " + filename);
 
         UUID uploadOpId = UUID.randomUUID();
         opStartTimes.put(uploadOpId, System.nanoTime());
@@ -340,7 +340,7 @@ public class Writer extends GenericProtocol {
 
             if (!filesVersions.containsKey(filename)) {
                 byte[] data = new byte[FILE_SIZE];
-                new java.util.Random().nextBytes(data);
+                new Random().nextBytes(data);
 
                 Files.write(path, data);
 
@@ -403,16 +403,14 @@ public class Writer extends GenericProtocol {
                 metadataContent.append(i + 1).append("|");
 
                 byte[] keyShareForThisServer = keyShares.get(i + 1);
-                String keyShareBase64 = java.util.Base64.getEncoder().encodeToString(keyShareForThisServer);
+                String keyShareBase64 = Base64.getEncoder().encodeToString(keyShareForThisServer);
                 metadataContent.append(keyShareBase64);
 
                 Files.write(metadataPath, metadataContent.toString().getBytes());
                 System.out.println("[WRITER] Metadata created: " + metadataPath);
-                System.out
-                        .println("[WRITER] Metadata content: " + metadataContent.toString().substring(0, 100) + "...");
 
                 sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
-                System.out.println("Mensagem enviada para: " + servers.get(i).toString());
+                System.out.println("Message sent to: " + servers.get(i).toString());
             }
 
             this.setIsDoingOp(true);
@@ -447,13 +445,7 @@ public class Writer extends GenericProtocol {
         ReadMetadata msg = new ReadMetadata(filename, rid);
         try {
             msg.signMessage(myPrivateKey);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        } catch (InvalidKeyException e) {
-            throw new RuntimeException(e);
-        } catch (SignatureException e) {
-            throw new RuntimeException(e);
-        } catch (InvalidSerializerException e) {
+        } catch (NoSuchAlgorithmException | InvalidKeyException | SignatureException | InvalidSerializerException e) {
             throw new RuntimeException(e);
         }
 
@@ -473,7 +465,7 @@ public class Writer extends GenericProtocol {
 
         System.out.println("[TIMEOUT] Request " + reqID + " timed out");
 
-        // Tipos que suportam retry
+        // Tipos que nos achamos que devemn ter retry
         boolean isRetryable = (msg instanceof Write || msg instanceof WriteMetadata
                 || msg instanceof Delete || msg instanceof ListRequest);
 
@@ -490,7 +482,7 @@ public class Writer extends GenericProtocol {
             retriesCount.put(reqID, usedRetries + 1);
             System.out.println("[RETRY] Retrying message " + reqID
                     + " (" + (usedRetries + 1) + "/" + MAX_RETRIES + ")");
-            retrieProccess(msg);
+            retryProcess(msg);
 
             clearTimeout();
             this.timeoutTimerID = setupTimer(new ExpiredOperation(reqID, msg), operation_timeout);
@@ -499,7 +491,7 @@ public class Writer extends GenericProtocol {
 
         System.out.println("[ABORT] Max retries reached for request " + reqID);
 
-        // Limpeza geral
+        // Limpeza dos vários mapas
         retriesCount.remove(reqID);
         pendingAcks.remove(reqID);
         pendingDeleteAcks.remove(reqID);
@@ -510,39 +502,33 @@ public class Writer extends GenericProtocol {
         System.out.println("[WRITER] Operation aborted. You can type commands again.");
     }
 
-    private void retrieProccess(SignedProtoMessage msg) {
-
+    private void retryProcess(SignedProtoMessage msg) {
         System.out.println("[RETRY] Retrying message of type: " + msg.getClass().getSimpleName());
 
-        if (msg instanceof Write writeMsg) {
-            for (int i = 0; i < servers.size(); i++) {
-                sendMessage(hostChannels[i], writeMsg, APP_SERVER_PROTO, servers.get(i), 0);
+        switch (msg) {
+            case Write writeMsg -> {
+                for (int i = 0; i < servers.size(); i++) {
+                    sendMessage(hostChannels[i], writeMsg, APP_SERVER_PROTO, servers.get(i), 0);
+                }
             }
-            return;
-        }
-
-        if (msg instanceof WriteMetadata metaMsg) {
-            for (int i = 0; i < servers.size(); i++) {
-                sendMessage(hostChannels[i], metaMsg, APP_SERVER_PROTO, servers.get(i), 0);
+            case WriteMetadata metaMsg -> {
+                for (int i = 0; i < servers.size(); i++) {
+                    sendMessage(hostChannels[i], metaMsg, APP_SERVER_PROTO, servers.get(i), 0);
+                }
             }
-            return;
-        }
-
-        if (msg instanceof Delete delMsg) {
-            for (int i = 0; i < servers.size(); i++) {
-                sendMessage(hostChannels[i], delMsg, APP_SERVER_PROTO, servers.get(i), 0);
+            case Delete delMsg -> {
+                for (int i = 0; i < servers.size(); i++) {
+                    sendMessage(hostChannels[i], delMsg, APP_SERVER_PROTO, servers.get(i), 0);
+                }
             }
-            return;
-        }
-
-        if (msg instanceof ListRequest listMsg) {
-            for (int i = 0; i < servers.size(); i++) {
-                sendMessage(hostChannels[i], listMsg, APP_SERVER_PROTO, servers.get(i), 0);
+            case ListRequest listMsg -> {
+                for (int i = 0; i < servers.size(); i++) {
+                    sendMessage(hostChannels[i], listMsg, APP_SERVER_PROTO, servers.get(i), 0);
+                }
             }
-            return;
+            default ->
+                System.out.println("[RETRY] Message type not eligible for retry.");
         }
-
-        System.out.println("[RETRY] Message type not eligible for retry.");
     }
 
     // Writer
@@ -594,15 +580,12 @@ public class Writer extends GenericProtocol {
                     System.out.println("PATH: " + metadataPath);
 
                     if (Files.exists(metadataPath)) {
-                        // LER BYTES
+                        // ler file
                         byte[] metadataBytes = Files.readAllBytes(metadataPath);
 
-                        // CONVERTER PARA STRING
+                        // converter para string
                         String metadataContent = new String(metadataBytes, StandardCharsets.UTF_8);
 
-                        // MOSTRAR CONTEÚDO
-                        //System.out.println("FILE: " + metadataPath.getFileName() + ": " + metadataContent);
-                        // PARSE (versão|hash|shareIndex|keyShareBase64)
                         String[] parts = metadataContent.split("\\|");
                         if (parts.length == 6) {
                             String identifier = parts[0];
@@ -613,8 +596,6 @@ public class Writer extends GenericProtocol {
                             int shareIndex = Integer.parseInt(parts[4]);
                             String keyShareB64 = parts[5];
 
-                            // Encrypt metadata
-                            // 5. ENVIAR PARA SERVIDOR
                             metadataMsg = new WriteMetadata(
                                     filename, version, metadataBytes, fileHashDecored, metadataRequestID);
                             metadataMsg.signMessage(myPrivateKey);
@@ -634,10 +615,7 @@ public class Writer extends GenericProtocol {
 
                 System.out.println("[WRITER] All metadata files sent!");
 
-                // Setup timer para a fase METADATA
                 clearTimeout();
-                // Nota: aqui não temos a mensagem concreta, mas passamos um ExpiredOperation
-                // com apenas o ID
                 this.timeoutTimerID = setupTimer(new ExpiredOperation(metadataRequestID, metadataMsg), operation_timeout);
                 this.setIsDoingOp(true);
 
@@ -813,7 +791,7 @@ public class Writer extends GenericProtocol {
             Map<Integer, byte[]> shares = new HashMap<>();
             for (Metadata m : pr.metadataResponses.values()) {
                 if (m.getVersion() == pr.selectedVersion) {
-//                    System.out.println("Share index: " + m.getShareIndex());
+                    // System.out.println("Share index: " + m.getShareIndex());
                     shares.put(m.getShareIndex(), m.getKeyShare());
                 }
             }
@@ -857,7 +835,7 @@ public class Writer extends GenericProtocol {
         clearTimeout();
     }
 
-    //Delete
+    // Delete
     public void deleteFile(String filename) {
         if (filename == null || filename.isEmpty()) {
             System.out.println("Usage: DELETE <filename>");
@@ -947,8 +925,8 @@ public class Writer extends GenericProtocol {
         List<Host> serversCopy = new ArrayList<>(servers);
         ListPendingResponse pending = new ListPendingResponse(searchPattern, rid, serversCopy);
         pendingListResponses.put(rid, pending);
-//        // Send only to first server (or you can query all for redundancy)
-//        sendMessage(hostChannels[0], msg, APP_SERVER_PROTO, servers.get(0), 0);
+        // Send only to first server (or you can query all for redundancy)
+        // SendMessage(hostChannels[0], msg, APP_SERVER_PROTO, servers.get(0), 0);
 
         for (int i = 0; i < servers.size(); i++) {
             sendMessage(hostChannels[i], msg, APP_SERVER_PROTO, servers.get(i), 0);
@@ -974,7 +952,6 @@ public class Writer extends GenericProtocol {
             }
         }
 
-        // Remover este host da lista de pendentes (tal como nos outros)
         synchronized (pending.pendingHosts) {
             pending.pendingHosts.remove(host);
         }
@@ -1050,7 +1027,7 @@ public class Writer extends GenericProtocol {
         return cipher.doFinal(encrypted);
     }
 
-    //Test functions
+    // Test functions
     public void getResults() {
         System.out.println("\n========== LATENCY STATISTICS ==========");
         printOne("UPLOAD", uploadLatencies);

@@ -147,7 +147,7 @@ public class Storage extends GenericProtocol {
         registerMessageHandler(channelID, ListRequest.MESSAGE_ID, this::uponReceiveList);
     }
 
-    //Metodo para registo dos clientes.
+    // Metodo para registo dos clientes.
     private void uponReceiveHello(HelloPublicKey msg, Host host, short i, int i1) {
         System.out.println("Received public key from: " + host.toString());
         publicKeys.put(host, msg.getPublicKey());
@@ -155,19 +155,14 @@ public class Storage extends GenericProtocol {
 
     // Write
     private void uponReceiveWriteMessage(Write write, Host host, short sourceProto, int channelID) {
-        System.out.println("Received request to upload file: " + write.getFilename());
+        System.out.println("Received WRITE for file: " + write.getFilename());
 
         try {
 
+            // checkar se assinatura é válida
             if (!write.checkSignature(publicKeys.get(host))) {
-                logger.error("Unauthorized client");
-                WriteAcknowledge wAck = new WriteAcknowledge(
-                        write.getFilename(),
-                        write.getRequestID(),
-                        false,
-                        this.mySelf,
-                        "Unauthorized client");
-                sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
+                logger.error("Unauthorized client signature");
+                sendAck(write, host, channelID, false, "Unauthorized client");
                 return;
             }
 
@@ -175,62 +170,61 @@ public class Storage extends GenericProtocol {
             int version = write.getVersion();
             byte[] encryptedFile = write.getEncryptedFile();
 
-            Host h = filesAuthors.get(filename);
-
-            if (h != null && h.getPort() != host.getPort()) {
-                System.out.println("Unauthorized, this file does not belong to you");
+            // ver se ele pode escrever por ser o dono do ficheiro
+            Host owner = filesAuthors.get(filename);
+            if (owner != null && owner.getPort() != host.getPort()) {
+                sendAck(write, host, channelID, false, "Unauthorized: this file belongs to another client");
                 return;
             }
 
+            // preparar o local onde vai escrever
             Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
             Files.createDirectories(fileDir);
 
-            int expectedVersion = getNextExpectedVersion(fileDir);
-            if (version != expectedVersion) {
-                System.err.println("Incorrect version, expected: " + expectedVersion
-                        + ", received: " + version);
+            int localVersion = getNextExpectedVersion(fileDir) - 1;
 
-                WriteAcknowledge wAck = new WriteAcknowledge(
-                        write.getFilename(),
-                        write.getRequestID(),
-                        false,
-                        this.mySelf,
-                        "Incorrect version");
-                sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
+            Path valueFile = fileDir.resolve("value-" + version);
+
+            // Regras de versões
+            // se tentar a mesma versão deve ser um retry
+            if (version == localVersion) {
+                System.out.println("Retry detected for version " + version);
+                sendAck(write, host, channelID, true, "");
                 return;
             }
 
-            Path valueFile = fileDir.resolve("value-" + version);
-            Files.write(valueFile, encryptedFile);
+            // 1 versão acima write legítimo
+            if (version == localVersion + 1) {
+                Files.write(valueFile, encryptedFile);
+                System.out.println("Stored new value-" + version);
+                sendAck(write, host, channelID, true, "");
+                filesAuthors.put(filename, host);
+                return;
+            }
 
-            System.out.println("Stored file: " + write.getFilename() + " on value-" + version
-                    + " (size: " + encryptedFile.length + " bytes)");
+            // versão muita acima ou abaixo é estranho
+            if ((version < localVersion) || (version > localVersion + 1)) {
+                sendAck(write, host, channelID, false,
+                        "Wrong version");
+            }
 
-            WriteAcknowledge wAck = new WriteAcknowledge(
-                    write.getFilename(),
-                    write.getRequestID(),
-                    true,
-                    this.mySelf, "");
-            sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
-
-            filesAuthors.put(filename, host);
-
-        } catch (IOException e) {
-            System.err.println("Error processing upload: " + e.getMessage());
-
-            WriteAcknowledge wAck = new WriteAcknowledge(
-                    write.getFilename(),
-                    write.getRequestID(),
-                    false,
-                    this.mySelf,
-                    "Erro desconhecido");
-            sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            System.err.println("Error in WRITE: " + e.getMessage());
+            sendAck(write, host, channelID, false, "Internal error");
         }
     }
 
-    //Auxiliar function to retreive the expected version on the Storage
+    private void sendAck(Write write, Host host, int channelID, boolean success, String msg) {
+        WriteAcknowledge ack = new WriteAcknowledge(
+                write.getFilename(),
+                write.getRequestID(),
+                success,
+                this.mySelf,
+                msg
+        );
+        sendMessage(channelID, ack, APP_CLIENT_WRITER, host, 0);
+    }
+
     private int getNextExpectedVersion(Path fileDir) throws IOException {
         if (!Files.exists(fileDir)) {
             return 1;
@@ -256,19 +250,15 @@ public class Storage extends GenericProtocol {
     }
 
     private void uponReceiveWriteMetadataMessage(WriteMetadata writeM, Host host, short sourceProto, int channelID) {
-        System.out.println("Received WriteMetadata for file: " + writeM.getFilename() + "from Host: " + host.toString());
+        System.out.println("Received WriteMetadata for file: " + writeM.getFilename()
+                + " from Host: " + host);
 
         try {
 
+            // checkar assinatura
             if (!writeM.checkSignature(publicKeys.get(host))) {
-                logger.error("Unauthorized client");
-                WriteMetadataAcknowledge wAck = new WriteMetadataAcknowledge(
-                        writeM.getFilename(),
-                        false,
-                        this.mySelf,
-                        writeM.getRequestID(),
-                        "Unauthorized client");
-                sendMessage(channelID, wAck, APP_CLIENT_WRITER, host, 0);
+                logger.error("Unauthorized metadata write");
+                sendMetaAck(writeM, host, channelID, false, "Unauthorized client");
                 return;
             }
 
@@ -276,42 +266,67 @@ public class Storage extends GenericProtocol {
             int version = writeM.getVersion();
             byte[] metadataBytes = writeM.getFileBytes();
 
+            // verificar se o ficheiro associado não existe
             Path fileDir = Paths.get(mySelf.getPort() + "-storage/" + filename);
             if (!Files.exists(fileDir)) {
-                System.err.println("Directory: " + fileDir + "doesn't exist");
-                WriteMetadataAcknowledge nack = new WriteMetadataAcknowledge(
-                        filename, false, mySelf, writeM.getRequestID(),
-                        "Directory doesn't exist");
-                sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
+                sendMetaAck(writeM, host, channelID, false, "Directory does not exist");
                 return;
             }
 
+            // obter metadata já existente
             Path metadataFile = fileDir.resolve("metadata");
-            Files.write(metadataFile, metadataBytes);
+            int localMetaVersion = 0;
 
-            System.out.println("Metadata changed (size: " + metadataBytes.length + " bytes)");
+            if (Files.exists(metadataFile)) {
+                try {
+                    byte[] curr = Files.readAllBytes(metadataFile);
+                    String[] parts = new String(curr, StandardCharsets.UTF_8).split("\\|");
 
-            WriteMetadataAcknowledge ack = new WriteMetadataAcknowledge(
-                    filename, true, mySelf, writeM.getRequestID(), "");
-            sendMessage(channelID, ack, APP_CLIENT_WRITER, host, 0);
+                    if (parts.length >= 3) {
+                        localMetaVersion = Integer.parseInt(parts[2]);
+                    }
+                } catch (Exception ignore) {
+                }
+            }
 
-        } catch (IOException e) {
+            // regras de versões
+            // versão igual deve ser um retry
+            if (version == localMetaVersion) {
+                System.out.println("Retry metadata version " + version);
+                sendMetaAck(writeM, host, channelID, true, "");
+                return;
+            }
+
+            // versão acima deve ser write normal
+            if (version == localMetaVersion + 1) {
+                Files.write(metadataFile, metadataBytes);
+                System.out.println("Metadata updated to version " + version);
+
+                sendMetaAck(writeM, host, channelID, true, "");
+                return;
+            }
+
+            // versão muito acima ou abaixo deve ser algo estranho
+            if ((version < localMetaVersion) || (version > localMetaVersion + 1)) {
+                sendMetaAck(writeM, host, channelID, false,
+                        "Wrong version");
+            }
+
+        } catch (Exception e) {
             System.err.println("Error processing WriteMetadata: " + e.getMessage());
-
-            WriteMetadataAcknowledge nack = new WriteMetadataAcknowledge(
-                    writeM.getFilename(), false, mySelf, writeM.getRequestID(), "Erro desconhecido");
-            sendMessage(channelID, nack, APP_CLIENT_WRITER, host, 0);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        } catch (SignatureException e) {
-            throw new RuntimeException(e);
-        } catch (InvalidKeyException e) {
-            throw new RuntimeException(e);
-        } catch (InvalidFormatException e) {
-            throw new RuntimeException(e);
-        } catch (NoSignaturePresentException e) {
-            throw new RuntimeException(e);
+            sendMetaAck(writeM, host, channelID, false, "Internal error");
         }
+    }
+
+    private void sendMetaAck(WriteMetadata writeM, Host host, int channelID, boolean success, String msg) {
+        WriteMetadataAcknowledge ack = new WriteMetadataAcknowledge(
+                writeM.getFilename(),
+                success,
+                this.mySelf,
+                writeM.getRequestID(),
+                msg
+        );
+        sendMessage(channelID, ack, APP_CLIENT_WRITER, host, 0);
     }
 
     // Read
